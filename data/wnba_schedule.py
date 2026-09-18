@@ -1,0 +1,1 @@
+"""WNBA schedule ingestion placeholder."""
