@@ -17,519 +17,1999 @@ import urllib.request
 import json
 from datetime import datetime
 
+
 MLB_API = "https://statsapi.mlb.com/api"
 
+
 HITTER_PROPS = [
-    "hits", "total_bases", "runs", "rbi", "walks", "home_runs",
-    "hitter_fantasy_score"
-]
-PITCHER_PROPS = [
-    "strikeouts", "pitching_outs", "hits_allowed", "walks_allowed",
-    "earned_runs", "pitcher_fantasy_score"
+    "hits",
+    "total_bases",
+    "runs",
+    "rbi",
+    "walks",
+    "home_runs",
+    "hitter_fantasy_score",
 ]
 
+
+PITCHER_PROPS = [
+    "strikeouts",
+    "pitching_outs",
+    "hits_allowed",
+    "walks_allowed",
+    "earned_runs",
+    "pitcher_fantasy_score",
+]
+
+
+# ============================================================
+# MLB API
+# ============================================================
+
 def _json(url, timeout=12):
-    req = urllib.request.Request(url, headers={"User-Agent":"SportsPropAI/1.0"})
+    req = urllib.request.Request(
+        url,
+        headers={"User-Agent": "SportsPropAI/1.0"},
+    )
+
     with urllib.request.urlopen(req, timeout=timeout) as r:
         return json.loads(r.read().decode("utf-8"))
 
+
 def find_player(name):
     q = urllib.parse.quote(name)
-    data = _json(f"{MLB_API}/v1/people/search?names={q}&sportIds=1")
+
+    data = _json(
+        f"{MLB_API}/v1/people/search"
+        f"?names={q}&sportIds=1"
+    )
+
     people = data.get("people", [])
+
     if not people:
         return None
-    exact = [p for p in people if p.get("fullName","").lower() == name.lower()]
+
+    exact = [
+        p for p in people
+        if p.get("fullName", "").lower() == name.lower()
+    ]
+
     return (exact or people)[0]
+
 
 def player_game_log(player_id, season, group):
     hydrate = urllib.parse.quote("team")
+
     url = (
         f"{MLB_API}/v1/people/{player_id}/stats"
-        f"?stats=gameLog&group={group}&season={season}&hydrate={hydrate}"
+        f"?stats=gameLog"
+        f"&group={group}"
+        f"&season={season}"
+        f"&hydrate={hydrate}"
     )
+
     data = _json(url)
+
     stats = data.get("stats", [])
+
     if not stats:
         return []
+
     splits = stats[0].get("splits", [])
+
     games = []
+
     for s in splits:
         stat = s.get("stat", {})
         game = s.get("game", {})
         opp = s.get("opponent", {})
         team = s.get("team", {})
-        games.append({
-            "date": s.get("date"),
-            "game_pk": game.get("gamePk"),
-            "opponent": opp.get("name"),
-            "opponent_id": opp.get("id"),
-            "team": team.get("name"),
-            "stat": stat,
-            "is_home": s.get("isHome"),
-        })
+
+        games.append(
+            {
+                "date": s.get("date"),
+                "game_pk": game.get("gamePk"),
+                "opponent": opp.get("name"),
+                "opponent_id": opp.get("id"),
+                "team": team.get("name"),
+                "stat": stat,
+                "is_home": s.get("isHome"),
+            }
+        )
+
     games.sort(key=lambda x: x.get("date") or "")
+
     return games
+
+
+# ============================================================
+# BASIC HELPERS
+# ============================================================
 
 def _num(v, default=0.0):
     try:
         return float(v)
+
     except (TypeError, ValueError):
         return default
 
+
+# ============================================================
+# PROP VALUES
+# ============================================================
+
 def hitter_value(game, prop):
     s = game["stat"]
+
     hits = _num(s.get("hits"))
     doubles = _num(s.get("doubles"))
     triples = _num(s.get("triples"))
     hr = _num(s.get("homeRuns"))
-    singles = max(0.0, hits-doubles-triples-hr)
-    tb = singles + 2*doubles + 3*triples + 4*hr
+
+    singles = max(
+        0.0,
+        hits - doubles - triples - hr,
+    )
+
+    tb = (
+        singles
+        + 2 * doubles
+        + 3 * triples
+        + 4 * hr
+    )
+
     vals = {
         "hits": hits,
-        "total_bases": _num(s.get("totalBases"), tb),
+
+        "total_bases": _num(
+            s.get("totalBases"),
+            tb,
+        ),
+
         "runs": _num(s.get("runs")),
+
         "rbi": _num(s.get("rbi")),
-        "walks": _num(s.get("baseOnBalls")),
+
+        "walks": _num(
+            s.get("baseOnBalls")
+        ),
+
         "home_runs": hr,
-        # PrizePicks-style common scoring approximation. Keep configurable.
+
+        # PrizePicks-style common scoring approximation.
         "hitter_fantasy_score": (
-            3*singles + 6*doubles + 9*triples + 12*hr
-            + 3*_num(s.get("baseOnBalls"))
-            + 3*_num(s.get("hitByPitch"))
-            + 3*_num(s.get("stolenBases"))
-            + 3*_num(s.get("runs"))
-            + 3*_num(s.get("rbi"))
+            3 * singles
+            + 6 * doubles
+            + 9 * triples
+            + 12 * hr
+            + 3 * _num(s.get("baseOnBalls"))
+            + 3 * _num(s.get("hitByPitch"))
+            + 3 * _num(s.get("stolenBases"))
+            + 3 * _num(s.get("runs"))
+            + 3 * _num(s.get("rbi"))
         ),
     }
+
     return vals[prop]
+
 
 def pitcher_value(game, prop):
     s = game["stat"]
-    ip = str(s.get("inningsPitched", "0.0"))
+
+    ip = str(
+        s.get(
+            "inningsPitched",
+            "0.0",
+        )
+    )
+
     try:
         whole, frac = ip.split(".")
-        outs = int(whole)*3 + int(frac)
+
+        outs = (
+            int(whole) * 3
+            + int(frac)
+        )
+
     except Exception:
-        outs = int(_num(ip)*3)
+        outs = int(
+            _num(ip) * 3
+        )
+
     vals = {
-        "strikeouts": _num(s.get("strikeOuts")),
+        "strikeouts": _num(
+            s.get("strikeOuts")
+        ),
+
         "pitching_outs": float(outs),
-        "hits_allowed": _num(s.get("hits")),
-        "walks_allowed": _num(s.get("baseOnBalls")),
-        "earned_runs": _num(s.get("earnedRuns")),
-        # Generic fantasy-score approximation; platform scoring can be configured later.
+
+        "hits_allowed": _num(
+            s.get("hits")
+        ),
+
+        "walks_allowed": _num(
+            s.get("baseOnBalls")
+        ),
+
+        "earned_runs": _num(
+            s.get("earnedRuns")
+        ),
+
         "pitcher_fantasy_score": (
-            3*outs + 3*_num(s.get("strikeOuts"))
-            - 3*_num(s.get("earnedRuns"))
+            3 * outs
+            + 3 * _num(s.get("strikeOuts"))
+            - 3 * _num(s.get("earnedRuns"))
             - _num(s.get("hits"))
             - _num(s.get("baseOnBalls"))
-            + 6*_num(s.get("wins"))
+            + 6 * _num(s.get("wins"))
         ),
     }
+
     return vals[prop]
+
+
+# ============================================================
+# WEIGHTED MEAN
+# ============================================================
 
 def weighted_mean(values, decay=0.94):
     if not values:
         return 0.0
-    weights = [decay ** (len(values)-1-i) for i in range(len(values))]
-    return sum(v*w for v,w in zip(values,weights))/sum(weights)
+
+    weights = [
+        decay ** (len(values) - 1 - i)
+        for i in range(len(values))
+    ]
+
+    return (
+        sum(
+            v * w
+            for v, w in zip(values, weights)
+        )
+        / sum(weights)
+    )
+
+
+# ============================================================
+# POISSON
+# ============================================================
 
 def poisson_cdf(k, lam):
     if lam <= 0:
         return 1.0
+
     term = math.exp(-lam)
     total = term
-    for i in range(1, k+1):
-        term *= lam/i
+
+    for i in range(1, k + 1):
+        term *= lam / i
         total += term
-    return min(1.0, total)
+
+    return min(
+        1.0,
+        total,
+    )
+
 
 def count_prob_more(line, lam):
-    # For PrizePicks half-lines this is P(X >= floor(line)+1).
+    """
+    Poisson component for discrete count props.
+
+    This is NOT used as the sole probability model anymore.
+    """
+
     k = math.floor(line)
-    return max(0.0, min(1.0, 1.0-poisson_cdf(k, max(lam, 0.01))))
+
+    return max(
+        0.0,
+        min(
+            1.0,
+            1.0 - poisson_cdf(
+                k,
+                max(lam, 0.01),
+            ),
+        ),
+    )
+
+
+# ============================================================
+# NEW PROBABILITY MODEL
+# ============================================================
+
+def empirical_more_rate(values, line):
+    """
+    Actual percentage of historical games
+    that finished above the selected line.
+    """
+
+    if not values:
+        return 0.5
+
+    overs = sum(
+        1
+        for value in values
+        if value > line
+    )
+
+    return overs / len(values)
+
+
+def normal_prob_more(line, mean, sigma):
+    """
+    Normal approximation used for composite
+    fantasy-score type props.
+
+    Unlike Poisson, this uses the player's
+    actual observed volatility.
+    """
+
+    if sigma <= 0.01:
+        if mean > line:
+            return 0.99
+
+        if mean < line:
+            return 0.01
+
+        return 0.50
+
+    z = (
+        (line - mean)
+        / sigma
+    )
+
+    cdf = (
+        0.5
+        * (
+            1.0
+            + math.erf(
+                z
+                / math.sqrt(2.0)
+            )
+        )
+    )
+
+    return max(
+        0.01,
+        min(
+            0.99,
+            1.0 - cdf,
+        ),
+    )
+
+
+def mlb_prop_probability(
+    prop,
+    line,
+    projection,
+    values,
+):
+    """
+    Conservative, distribution-aware MLB probability calibration.
+
+    Uses historical line-clearing rates, observed volatility,
+    projection evidence, sample-size shrinkage, disagreement
+    penalties, and conservative probability caps.
+    """
+
+    if not values:
+        return 0.50
+
+    prop = str(prop).lower()
+    line = float(line)
+    projection = float(projection)
+
+    clean = []
+    for value in values:
+        try:
+            clean.append(float(value))
+        except (TypeError, ValueError):
+            pass
+
+    if not clean:
+        return 0.50
+
+    recent20 = clean[-20:]
+    recent10 = clean[-10:]
+    recent5 = clean[-5:]
+
+    season_rate = empirical_more_rate(clean, line)
+    l20_rate = empirical_more_rate(recent20, line)
+    l10_rate = empirical_more_rate(recent10, line)
+    l5_rate = empirical_more_rate(recent5, line)
+
+    # L5 is deliberately small so a short streak cannot dominate.
+    empirical = (
+        0.45 * season_rate
+        + 0.30 * l20_rate
+        + 0.20 * l10_rate
+        + 0.05 * l5_rate
+    )
+
+    volatility_sample = recent20 if len(recent20) >= 10 else clean
+
+    if len(volatility_sample) >= 2:
+        sigma = statistics.stdev(volatility_sample)
+    else:
+        sigma = 0.0
+
+    # Conservative volatility floors by prop type.
+    sigma_floors = {
+        "hits": 0.75,
+        "total_bases": 1.60,
+        "runs": 0.65,
+        "rbi": 0.80,
+        "walks": 0.55,
+        "home_runs": 0.35,
+        "hitter_fantasy_score": 7.50,
+        "strikeouts": 2.00,
+        "pitching_outs": 3.25,
+        "hits_allowed": 1.75,
+        "walks_allowed": 1.25,
+        "earned_runs": 1.75,
+        "pitcher_fantasy_score": 10.00,
+    }
+
+    sigma = max(
+        sigma,
+        sigma_floors.get(
+            prop,
+            max(abs(projection) * 0.30, 1.0),
+        ),
+    )
+
+    distribution_prob = normal_prob_more(
+        line,
+        projection,
+        sigma,
+    )
+
+    fantasy_props = {
+        "hitter_fantasy_score",
+        "pitcher_fantasy_score",
+    }
+
+    if prop in fantasy_props:
+        # Fantasy score is volatile: actual game outcomes dominate.
+        raw_prob = (
+            0.75 * empirical
+            + 0.25 * distribution_prob
+        )
+    else:
+        poisson_prob = count_prob_more(
+            line,
+            max(projection, 0.01),
+        )
+
+        raw_prob = (
+            0.65 * empirical
+            + 0.20 * distribution_prob
+            + 0.15 * poisson_prob
+        )
+
+    # Shrink toward 50%; even a full season is not perfect information.
+    sample_size = len(clean)
+    reliability = min(
+        0.88,
+        sample_size / 70.0,
+    )
+
+    calibrated = (
+        0.50
+        + (raw_prob - 0.50) * reliability
+    )
+
+    # Penalize confidence when projection and empirical history disagree.
+    if (distribution_prob >= 0.50) != (empirical >= 0.50):
+        calibrated = (
+            0.50
+            + (calibrated - 0.50) * 0.70
+        )
+
+    # Prevent public-game-log models from advertising fake certainty.
+    if prop in fantasy_props:
+        lower_cap = 0.30
+        upper_cap = 0.70
+    else:
+        lower_cap = 0.27
+        upper_cap = 0.73
+
+    return max(
+        lower_cap,
+        min(
+            upper_cap,
+            calibrated,
+        ),
+    )
+
+
+# ============================================================
+# RECENT FORM
+# ============================================================
 
 def recent_context(values):
-    season = statistics.mean(values)
-    l20 = statistics.mean(values[-20:])
-    l10 = statistics.mean(values[-10:])
-    l5 = statistics.mean(values[-5:])
-    # L5 is deliberately low weight to avoid chasing streaks.
-    baseline = 0.45*season + 0.25*l20 + 0.20*l10 + 0.10*l5
-    return season,l20,l10,l5,baseline
+    season = statistics.mean(
+        values
+    )
 
-def opponent_history(games, opponent, value_fn, prop):
+    l20 = statistics.mean(
+        values[-20:]
+    )
+
+    l10 = statistics.mean(
+        values[-10:]
+    )
+
+    l5 = statistics.mean(
+        values[-5:]
+    )
+
+    # More balanced than the old:
+    # 45% season / 25% L20 / 20% L10 / 10% L5.
+    #
+    # Long-term ability still matters,
+    # but recent performance gets more influence.
+    baseline = (
+        0.30 * season
+        + 0.30 * l20
+        + 0.25 * l10
+        + 0.15 * l5
+    )
+
+    return (
+        season,
+        l20,
+        l10,
+        l5,
+        baseline,
+    )
+
+
+# ============================================================
+# OPPONENT HISTORY
+# ============================================================
+
+def opponent_history(
+    games,
+    opponent,
+    value_fn,
+    prop,
+):
+    """
+    Historical games against the opponent TEAM.
+
+    This is not batter-vs-pitcher history.
+    """
+
     if not opponent:
         return []
+
     o = opponent.lower()
+
     return [
-        value_fn(g, prop) for g in games
-        if o in str(g.get("opponent","")).lower()
+        value_fn(g, prop)
+        for g in games
+        if o
+        in str(
+            g.get(
+                "opponent",
+                "",
+            )
+        ).lower()
     ]
 
-def analyze_mlb(player_name, player_type, prop, line, opponent=None, season=None):
+
+# ============================================================
+# MAIN MLB ANALYSIS
+# ============================================================
+
+def analyze_mlb(
+    player_name,
+    player_type,
+    prop,
+    line,
+    opponent=None,
+    season=None,
+):
+
     if season is None:
         season = datetime.now().year
+
     player_type = player_type.lower()
     prop = prop.lower()
 
-    allowed = HITTER_PROPS if player_type == "hitter" else PITCHER_PROPS
+    allowed = (
+        HITTER_PROPS
+        if player_type == "hitter"
+        else PITCHER_PROPS
+    )
+
     if prop not in allowed:
-        raise ValueError(f"{prop} is not valid for {player_type}")
+        raise ValueError(
+            f"{prop} is not valid "
+            f"for {player_type}"
+        )
 
-    p = find_player(player_name)
+    p = find_player(
+        player_name
+    )
+
     if not p:
-        raise ValueError("MLB player not found.")
+        raise ValueError(
+            "MLB player not found."
+        )
 
-    group = "hitting" if player_type == "hitter" else "pitching"
-    games = player_game_log(p["id"], season, group)
-    value_fn = hitter_value if player_type == "hitter" else pitcher_value
-    values = [value_fn(g, prop) for g in games]
+    group = (
+        "hitting"
+        if player_type == "hitter"
+        else "pitching"
+    )
+
+    games = player_game_log(
+        p["id"],
+        season,
+        group,
+    )
+
+    value_fn = (
+        hitter_value
+        if player_type == "hitter"
+        else pitcher_value
+    )
+
+    values = [
+        value_fn(
+            g,
+            prop,
+        )
+        for g in games
+    ]
 
     if len(values) < 10:
-        raise ValueError("Not enough MLB games in the selected season.")
+        raise ValueError(
+            "Not enough MLB games "
+            "in the selected season."
+        )
 
-    season_avg,l20,l10,l5,projection = recent_context(values)
+    (
+        season_avg,
+        l20,
+        l10,
+        l5,
+        projection,
+    ) = recent_context(
+        values
+    )
+
     original = projection
 
-    # H2H is supporting evidence only and is heavily shrunk.
-    h2h = opponent_history(games, opponent, value_fn, prop)
+    # --------------------------------------------------------
+    # Opponent-team history
+    # --------------------------------------------------------
+
+    h2h = opponent_history(
+        games,
+        opponent,
+        value_fn,
+        prop,
+    )
+
     h2h_adj = 0.0
+
     if len(h2h) >= 2:
-        h2h_avg = statistics.mean(h2h)
-        h2h_weight = min(0.12, 0.03*len(h2h))
-        projection = (1-h2h_weight)*projection + h2h_weight*h2h_avg
-        h2h_adj = projection-original
 
-    # Count props use a Poisson-style distribution rather than WNBA's normal model.
-    p_more = count_prob_more(line, projection)
-    p_less = 1.0-p_more
+        h2h_avg = statistics.mean(
+            h2h
+        )
 
-    best = max(p_more,p_less)
-    lean = "MORE" if p_more > p_less else "LESS"
-    confidence = "PASS" if best < 0.58 else ("MODERATE" if best < 0.65 else "HIGH")
+        # Keep opponent history supporting,
+        # never dominant.
+        h2h_weight = min(
+            0.12,
+            0.03 * len(h2h),
+        )
+
+        projection = (
+            (1 - h2h_weight)
+            * projection
+            + h2h_weight
+            * h2h_avg
+        )
+
+        h2h_adj = (
+            projection
+            - original
+        )
+
+    # --------------------------------------------------------
+    # Correct probability
+    # --------------------------------------------------------
+
+    p_more = mlb_prop_probability(
+        prop,
+        float(line),
+        projection,
+        values,
+    )
+
+    p_less = (
+        1.0
+        - p_more
+    )
+
+    best = max(
+        p_more,
+        p_less,
+    )
+
+    lean = (
+        "MORE"
+        if p_more > p_less
+        else "LESS"
+    )
+
+    confidence = (
+        "PASS"
+        if best < 0.58
+        else (
+            "MODERATE"
+            if best < 0.67
+            else "HIGH"
+        )
+    )
+
     if confidence == "PASS":
         lean = "PASS"
 
-    # Empirical volatility for display.
-    recent = values[-20:] if len(values) >= 20 else values
-    sigma = statistics.stdev(recent) if len(recent) >= 2 else 0.0
+    recent = (
+        values[-20:]
+        if len(values) >= 20
+        else values
+    )
+
+    sigma = (
+        statistics.stdev(recent)
+        if len(recent) >= 2
+        else 0.0
+    )
+
+    # --------------------------------------------------------
+    # Hit rates for audit/display
+    # --------------------------------------------------------
+
+    season_more_rate = empirical_more_rate(
+        values,
+        float(line),
+    )
+
+    l20_more_rate = empirical_more_rate(
+        values[-20:],
+        float(line),
+    )
+
+    l10_more_rate = empirical_more_rate(
+        values[-10:],
+        float(line),
+    )
+
+    l5_more_rate = empirical_more_rate(
+        values[-5:],
+        float(line),
+    )
 
     return {
-        "player": p.get("fullName", player_name),
+        "player": p.get(
+            "fullName",
+            player_name,
+        ),
+
         "player_id": p["id"],
-        "player_type": player_type.upper(),
+
+        "player_type": (
+            player_type.upper()
+        ),
+
         "prop": prop.upper(),
+
         "line": float(line),
+
         "opponent": opponent,
+
         "projection": projection,
+
         "projection_before_h2h": original,
+
         "h2h_adjustment": h2h_adj,
+
         "p_more": p_more,
+
         "p_less": p_less,
+
         "lean": lean,
+
         "confidence": confidence,
+
         "season_avg": season_avg,
+
         "l20": l20,
+
         "l10": l10,
+
         "l5": l5,
+
         "sigma": sigma,
+
         "sample_size": len(values),
+
         "h2h_games": len(h2h),
-        "h2h_avg": statistics.mean(h2h) if h2h else None,
+
+        "h2h_avg": (
+            statistics.mean(h2h)
+            if h2h
+            else None
+        ),
+
+        "season_more_rate": season_more_rate,
+
+        "l20_more_rate": l20_more_rate,
+
+        "l10_more_rate": l10_more_rate,
+
+        "l5_more_rate": l5_more_rate,
+
         "last10": values[-10:],
+
+        # Internal data needed when verified
+        # pregame adjustment recomputes probability.
+        "_values": values,
+
         "model_note": (
-            "MLB count model uses regressed multi-horizon form plus small H2H support. "
-            "Pregame lineup, handedness, park, weather and starter-specific matchup "
-            "should be added only from reliable live inputs; they are not fabricated."
+            "MLB model combines multi-horizon form, "
+            "actual line-clearing rates, player volatility, "
+            "small opponent-team history support, and verified "
+            "pregame information. Fantasy scores do not use "
+            "Poisson as a standalone probability model."
         ),
     }
 
 
+# ============================================================
+# MLB TEAMS
+# ============================================================
+
 def mlb_teams(season=None):
-    if season is None:
-        season = datetime.now().year
-    data = _json(f"{MLB_API}/v1/teams?sportId=1&season={season}")
-    teams = []
-    for t in data.get("teams", []):
-        teams.append({
-            "id": t.get("id"),
-            "name": t.get("name"),
-            "abbreviation": t.get("abbreviation"),
-        })
-    return sorted(teams, key=lambda x: x["name"] or "")
 
-def mlb_team_roster(team_id, season=None):
     if season is None:
         season = datetime.now().year
+
     data = _json(
-        f"{MLB_API}/v1/teams/{int(team_id)}/roster"
-        f"?rosterType=active&season={season}"
+        f"{MLB_API}/v1/teams"
+        f"?sportId=1"
+        f"&season={season}"
     )
-    players = []
-    for item in data.get("roster", []):
-        person = item.get("person", {})
-        pos = item.get("position", {})
-        players.append({
-            "id": person.get("id"),
-            "name": person.get("fullName"),
-            "position": pos.get("abbreviation"),
-            "position_type": pos.get("type"),
-        })
-    return sorted(players, key=lambda x: x["name"] or "")
 
-def mlb_pregame_game_context(team_id, opponent_id=None, date=None):
-    """Return today's/selected-date game, probable pitchers, and posted lineups when available."""
-    if date is None:
-        date = datetime.now().strftime("%Y-%m-%d")
-    url = (
-        f"{MLB_API}/v1/schedule?sportId=1&date={date}"
-        f"&teamId={int(team_id)}&hydrate=probablePitcher,team,linescore"
+    teams = []
+
+    for t in data.get(
+        "teams",
+        [],
+    ):
+
+        teams.append(
+            {
+                "id": t.get("id"),
+                "name": t.get("name"),
+                "abbreviation": t.get(
+                    "abbreviation"
+                ),
+            }
+        )
+
+    return sorted(
+        teams,
+        key=lambda x: x["name"] or "",
     )
+
+
+# ============================================================
+# MLB ROSTER
+# ============================================================
+
+def mlb_team_roster(
+    team_id,
+    season=None,
+):
+
+    if season is None:
+        season = datetime.now().year
+
+    data = _json(
+        f"{MLB_API}/v1/teams/"
+        f"{int(team_id)}/roster"
+        f"?rosterType=active"
+        f"&season={season}"
+    )
+
+    players = []
+
+    for item in data.get(
+        "roster",
+        [],
+    ):
+
+        person = item.get(
+            "person",
+            {},
+        )
+
+        pos = item.get(
+            "position",
+            {},
+        )
+
+        players.append(
+            {
+                "id": person.get("id"),
+                "name": person.get(
+                    "fullName"
+                ),
+                "position": pos.get(
+                    "abbreviation"
+                ),
+                "position_type": pos.get(
+                    "type"
+                ),
+            }
+        )
+
+    return sorted(
+        players,
+        key=lambda x: x["name"] or "",
+    )
+
+
+# ============================================================
+# BASIC PREGAME GAME CONTEXT
+# ============================================================
+
+def mlb_pregame_game_context(
+    team_id,
+    opponent_id=None,
+    date=None,
+):
+
+    if date is None:
+        date = datetime.now().strftime(
+            "%Y-%m-%d"
+        )
+
+    url = (
+        f"{MLB_API}/v1/schedule"
+        f"?sportId=1"
+        f"&date={date}"
+        f"&teamId={int(team_id)}"
+        f"&hydrate=probablePitcher,team,linescore"
+    )
+
     data = _json(url)
+
     games = []
-    for d in data.get("dates", []):
-        for g in d.get("games", []):
-            away = g.get("teams", {}).get("away", {})
-            home = g.get("teams", {}).get("home", {})
-            away_id = away.get("team", {}).get("id")
-            home_id = home.get("team", {}).get("id")
-            if opponent_id and int(opponent_id) not in (away_id, home_id):
-                continue
-            games.append({
-                "game_pk": g.get("gamePk"),
-                "status": g.get("status", {}).get("detailedState"),
-                "away": away.get("team", {}).get("name"),
-                "home": home.get("team", {}).get("name"),
-                "away_probable": (away.get("probablePitcher") or {}).get("fullName"),
-                "home_probable": (home.get("probablePitcher") or {}).get("fullName"),
-            })
+
+    for d in data.get(
+        "dates",
+        [],
+    ):
+
+        for g in d.get(
+            "games",
+            [],
+        ):
+
+            away = (
+                g.get(
+                    "teams",
+                    {},
+                )
+                .get(
+                    "away",
+                    {},
+                )
+            )
+
+            home = (
+                g.get(
+                    "teams",
+                    {},
+                )
+                .get(
+                    "home",
+                    {},
+                )
+            )
+
+            away_id = (
+                away.get(
+                    "team",
+                    {},
+                )
+                .get("id")
+            )
+
+            home_id = (
+                home.get(
+                    "team",
+                    {},
+                )
+                .get("id")
+            )
+
+            if opponent_id:
+
+                if int(opponent_id) not in (
+                    away_id,
+                    home_id,
+                ):
+                    continue
+
+            games.append(
+                {
+                    "game_pk": g.get(
+                        "gamePk"
+                    ),
+
+                    "status": (
+                        g.get(
+                            "status",
+                            {},
+                        )
+                        .get(
+                            "detailedState"
+                        )
+                    ),
+
+                    "away": (
+                        away.get(
+                            "team",
+                            {},
+                        )
+                        .get("name")
+                    ),
+
+                    "home": (
+                        home.get(
+                            "team",
+                            {},
+                        )
+                        .get("name")
+                    ),
+
+                    "away_probable": (
+                        away.get(
+                            "probablePitcher"
+                        )
+                        or {}
+                    ).get(
+                        "fullName"
+                    ),
+
+                    "home_probable": (
+                        home.get(
+                            "probablePitcher"
+                        )
+                        or {}
+                    ).get(
+                        "fullName"
+                    ),
+                }
+            )
+
     return games
 
-# ---------- MLB VERIFIED PREGAME CONTEXT V3 ----------
+
+# ============================================================
+# VERIFIED PREGAME CONTEXT
+# ============================================================
 
 def _person_details(person_id):
+
     try:
-        d = _json(f"{MLB_API}/v1/people/{int(person_id)}")
-        p = (d.get("people") or [{}])[0]
+
+        d = _json(
+            f"{MLB_API}/v1/people/"
+            f"{int(person_id)}"
+        )
+
+        p = (
+            d.get("people")
+            or [{}]
+        )[0]
+
         return {
             "id": p.get("id"),
-            "name": p.get("fullName"),
-            "bat_side": (p.get("batSide") or {}).get("code"),
-            "pitch_hand": (p.get("pitchHand") or {}).get("code"),
+
+            "name": p.get(
+                "fullName"
+            ),
+
+            "bat_side": (
+                p.get("batSide")
+                or {}
+            ).get("code"),
+
+            "pitch_hand": (
+                p.get("pitchHand")
+                or {}
+            ).get("code"),
         }
+
     except Exception:
         return {}
 
+
 def _live_feed(game_pk):
-    return _json(f"{MLB_API}/v1.1/game/{int(game_pk)}/feed/live")
+
+    return _json(
+        f"{MLB_API}/v1.1/game/"
+        f"{int(game_pk)}/feed/live"
+    )
+
 
 def _weather_from_feed(feed):
-    gd = feed.get("gameData", {})
-    w = gd.get("weather") or {}
-    venue = gd.get("venue") or {}
+
+    gd = feed.get(
+        "gameData",
+        {},
+    )
+
+    w = (
+        gd.get("weather")
+        or {}
+    )
+
+    venue = (
+        gd.get("venue")
+        or {}
+    )
+
     return {
         "venue": venue.get("name"),
-        "condition": w.get("condition"),
-        "temp_f": w.get("temp"),
-        "wind": w.get("wind"),
+
+        "condition": w.get(
+            "condition"
+        ),
+
+        "temp_f": w.get(
+            "temp"
+        ),
+
+        "wind": w.get(
+            "wind"
+        ),
     }
+
 
 def _confirmed_lineups(feed):
     """
-    Only returns batting order when MLB live-feed contains an actual battingOrder.
-    Empty battingOrder => UNAVAILABLE. We do not infer or guess.
+    Only returns batting order when MLB
+    live-feed contains an actual battingOrder.
+
+    Empty battingOrder = unavailable.
+    We never infer or guess.
     """
-    box = (feed.get("liveData") or {}).get("boxscore") or {}
-    teams = box.get("teams") or {}
+
+    box = (
+        feed.get(
+            "liveData"
+        )
+        or {}
+    ).get(
+        "boxscore"
+    ) or {}
+
+    teams = (
+        box.get("teams")
+        or {}
+    )
+
     result = {}
-    for side in ("away", "home"):
-        td = teams.get(side) or {}
-        order = td.get("battingOrder") or []
-        players = td.get("players") or {}
+
+    for side in (
+        "away",
+        "home",
+    ):
+
+        td = (
+            teams.get(side)
+            or {}
+        )
+
+        order = (
+            td.get(
+                "battingOrder"
+            )
+            or []
+        )
+
+        players = (
+            td.get(
+                "players"
+            )
+            or {}
+        )
+
         lineup = []
-        for i, pid in enumerate(order, start=1):
-            pd = players.get(f"ID{pid}", {})
-            person = pd.get("person") or {}
-            lineup.append({
-                "order": i,
-                "id": pid,
-                "name": person.get("fullName"),
-                "position": (pd.get("position") or {}).get("abbreviation"),
-            })
+
+        for i, pid in enumerate(
+            order,
+            start=1,
+        ):
+
+            pd = players.get(
+                f"ID{pid}",
+                {},
+            )
+
+            person = (
+                pd.get("person")
+                or {}
+            )
+
+            lineup.append(
+                {
+                    "order": i,
+
+                    "id": pid,
+
+                    "name": person.get(
+                        "fullName"
+                    ),
+
+                    "position": (
+                        pd.get(
+                            "position"
+                        )
+                        or {}
+                    ).get(
+                        "abbreviation"
+                    ),
+                }
+            )
+
         result[side] = lineup
+
     return result
 
-def _find_today_game(team_id, opponent_id=None, date=None):
-    games = mlb_pregame_game_context(team_id, opponent_id, date)
-    return games[0] if games else None
 
-def _schedule_game_full(team_id, opponent_id=None, date=None):
-    if date is None:
-        date = datetime.now().strftime("%Y-%m-%d")
-    url = (
-        f"{MLB_API}/v1/schedule?sportId=1&date={date}"
-        f"&teamId={int(team_id)}&hydrate=probablePitcher,team,venue"
+def _find_today_game(
+    team_id,
+    opponent_id=None,
+    date=None,
+):
+
+    games = mlb_pregame_game_context(
+        team_id,
+        opponent_id,
+        date,
     )
+
+    return (
+        games[0]
+        if games
+        else None
+    )
+
+
+def _schedule_game_full(
+    team_id,
+    opponent_id=None,
+    date=None,
+):
+
+    if date is None:
+        date = datetime.now().strftime(
+            "%Y-%m-%d"
+        )
+
+    url = (
+        f"{MLB_API}/v1/schedule"
+        f"?sportId=1"
+        f"&date={date}"
+        f"&teamId={int(team_id)}"
+        f"&hydrate=probablePitcher,team,venue"
+    )
+
     data = _json(url)
-    for d in data.get("dates", []):
-        for g in d.get("games", []):
-            away = g.get("teams", {}).get("away", {})
-            home = g.get("teams", {}).get("home", {})
-            aid = away.get("team", {}).get("id")
-            hid = home.get("team", {}).get("id")
-            if opponent_id and int(opponent_id) not in (aid, hid):
-                continue
+
+    for d in data.get(
+        "dates",
+        [],
+    ):
+
+        for g in d.get(
+            "games",
+            [],
+        ):
+
+            away = (
+                g.get(
+                    "teams",
+                    {},
+                )
+                .get(
+                    "away",
+                    {},
+                )
+            )
+
+            home = (
+                g.get(
+                    "teams",
+                    {},
+                )
+                .get(
+                    "home",
+                    {},
+                )
+            )
+
+            aid = (
+                away.get(
+                    "team",
+                    {},
+                )
+                .get("id")
+            )
+
+            hid = (
+                home.get(
+                    "team",
+                    {},
+                )
+                .get("id")
+            )
+
+            if opponent_id:
+
+                if int(opponent_id) not in (
+                    aid,
+                    hid,
+                ):
+                    continue
+
             return {
-                "game_pk": g.get("gamePk"),
-                "away_id": aid, "home_id": hid,
-                "away": away.get("team", {}).get("name"),
-                "home": home.get("team", {}).get("name"),
-                "away_probable": away.get("probablePitcher"),
-                "home_probable": home.get("probablePitcher"),
-                "venue": (g.get("venue") or {}).get("name"),
-                "status": (g.get("status") or {}).get("detailedState"),
+                "game_pk": g.get(
+                    "gamePk"
+                ),
+
+                "away_id": aid,
+
+                "home_id": hid,
+
+                "away": (
+                    away.get(
+                        "team",
+                        {},
+                    )
+                    .get("name")
+                ),
+
+                "home": (
+                    home.get(
+                        "team",
+                        {},
+                    )
+                    .get("name")
+                ),
+
+                "away_probable": (
+                    away.get(
+                        "probablePitcher"
+                    )
+                ),
+
+                "home_probable": (
+                    home.get(
+                        "probablePitcher"
+                    )
+                ),
+
+                "venue": (
+                    g.get("venue")
+                    or {}
+                ).get(
+                    "name"
+                ),
+
+                "status": (
+                    g.get("status")
+                    or {}
+                ).get(
+                    "detailedState"
+                ),
             }
+
     return None
 
-def _recent_plate_appearances(games):
-    vals=[]
-    for g in games[-20:]:
-        s=g["stat"]
-        pa=s.get("plateAppearances")
-        if pa is None:
-            pa = (_num(s.get("atBats")) + _num(s.get("baseOnBalls"))
-                  + _num(s.get("hitByPitch")) + _num(s.get("sacFlies"))
-                  + _num(s.get("sacBunts")))
-        vals.append(_num(pa))
-    return weighted_mean(vals) if vals else None
 
-def _recent_pitcher_outs(games):
-    vals=[]
+# ============================================================
+# EXPECTED OPPORTUNITY
+# ============================================================
+
+def _recent_plate_appearances(
+    games,
+):
+
+    vals = []
+
+    for g in games[-20:]:
+
+        s = g["stat"]
+
+        pa = s.get(
+            "plateAppearances"
+        )
+
+        if pa is None:
+
+            pa = (
+                _num(
+                    s.get("atBats")
+                )
+                + _num(
+                    s.get(
+                        "baseOnBalls"
+                    )
+                )
+                + _num(
+                    s.get(
+                        "hitByPitch"
+                    )
+                )
+                + _num(
+                    s.get(
+                        "sacFlies"
+                    )
+                )
+                + _num(
+                    s.get(
+                        "sacBunts"
+                    )
+                )
+            )
+
+        vals.append(
+            _num(pa)
+        )
+
+    return (
+        weighted_mean(vals)
+        if vals
+        else None
+    )
+
+
+def _recent_pitcher_outs(
+    games,
+):
+
+    vals = []
+
     for g in games[-10:]:
-        vals.append(pitcher_value(g, "pitching_outs"))
-    return weighted_mean(vals) if vals else None
+
+        vals.append(
+            pitcher_value(
+                g,
+                "pitching_outs",
+            )
+        )
+
+    return (
+        weighted_mean(vals)
+        if vals
+        else None
+    )
+
 
 def _lineup_pa_multiplier(slot):
-    # Conservative opportunity-only adjustment after lineup is CONFIRMED.
-    return {1:1.06,2:1.045,3:1.025,4:1.01,5:1.00,6:0.98,7:0.96,8:0.94,9:0.92}.get(slot,1.0)
+    """
+    Conservative opportunity-only adjustment
+    after lineup is confirmed.
+    """
 
-def verified_pregame_context(player_name, player_type, team_id, opponent_id, season=None):
+    return {
+        1: 1.06,
+        2: 1.045,
+        3: 1.025,
+        4: 1.01,
+        5: 1.00,
+        6: 0.98,
+        7: 0.96,
+        8: 0.94,
+        9: 0.92,
+    }.get(
+        slot,
+        1.0,
+    )
+
+
+# ============================================================
+# VERIFIED PREGAME
+# ============================================================
+
+def verified_pregame_context(
+    player_name,
+    player_type,
+    team_id,
+    opponent_id,
+    season=None,
+):
     """
-    Missing verified data is marked unavailable and produces NO adjustment.
-    Never guesses a batting slot, starter, handedness, weather, or injury status.
+    Missing verified data is marked unavailable
+    and produces NO adjustment.
+
+    Never guesses:
+    - batting slot
+    - starter
+    - handedness
+    - weather
+    - injury status
     """
+
     if season is None:
-        season=datetime.now().year
-    game=_schedule_game_full(team_id, opponent_id)
+        season = datetime.now().year
+
+    game = _schedule_game_full(
+        team_id,
+        opponent_id,
+    )
+
     status = {
-        "game": "available" if game else "unavailable",
+        "game": (
+            "available"
+            if game
+            else "unavailable"
+        ),
+
         "lineup": "unavailable",
+
         "batting_order": None,
+
         "opposing_starter": "unavailable",
+
         "starter_name": None,
+
         "starter_hand": None,
+
         "player_hand": None,
+
         "handedness_split": "unavailable",
+
         "expected_opportunity": "unavailable",
+
         "expected_pa": None,
+
         "expected_outs": None,
+
         "park": "unavailable",
+
         "venue": None,
+
         "weather": "unavailable",
+
         "weather_text": None,
+
         "injuries": "unavailable",
+
         "notes": [],
+
         "projection_multiplier": 1.0,
     }
+
     if not game:
-        status["notes"].append("No matching MLB game found today. No pregame adjustment applied.")
+
+        status["notes"].append(
+            "No matching MLB game found today. "
+            "No pregame adjustment applied."
+        )
+
         return status
 
-    status["venue"]=game.get("venue")
-    status["park"]="available" if status["venue"] else "unavailable"
+    status["venue"] = game.get(
+        "venue"
+    )
+
+    status["park"] = (
+        "available"
+        if status["venue"]
+        else "unavailable"
+    )
+
+    # --------------------------------------------------------
+    # LIVE FEED
+    # --------------------------------------------------------
 
     try:
-        feed=_live_feed(game["game_pk"])
+
+        feed = _live_feed(
+            game["game_pk"]
+        )
+
     except Exception:
-        feed=None
+
+        feed = None
 
     if feed:
-        weather=_weather_from_feed(feed)
-        if weather.get("condition") or weather.get("temp_f") or weather.get("wind"):
-            status["weather"]="available"
-            bits=[str(x) for x in [weather.get("condition"),
-                 f'{weather.get("temp_f")}F' if weather.get("temp_f") else None,
-                 weather.get("wind")] if x]
-            status["weather_text"]=" · ".join(bits)
 
-        lineups=_confirmed_lineups(feed)
-        player_side="home" if int(team_id)==game["home_id"] else "away"
-        opp_side="away" if player_side=="home" else "home"
-        lineup=lineups.get(player_side) or []
+        weather = _weather_from_feed(
+            feed
+        )
+
+        if (
+            weather.get("condition")
+            or weather.get("temp_f")
+            or weather.get("wind")
+        ):
+
+            status["weather"] = (
+                "available"
+            )
+
+            bits = [
+                str(x)
+                for x in [
+                    weather.get(
+                        "condition"
+                    ),
+
+                    (
+                        f'{weather.get("temp_f")}F'
+                        if weather.get(
+                            "temp_f"
+                        )
+                        else None
+                    ),
+
+                    weather.get(
+                        "wind"
+                    ),
+                ]
+                if x
+            ]
+
+            status["weather_text"] = (
+                " · ".join(bits)
+            )
+
+        lineups = _confirmed_lineups(
+            feed
+        )
+
+        player_side = (
+            "home"
+            if int(team_id)
+            == game["home_id"]
+            else "away"
+        )
+
+        lineup = (
+            lineups.get(
+                player_side
+            )
+            or []
+        )
+
         if lineup:
-            status["lineup"]="confirmed"
-            hit=next((x for x in lineup if (x.get("name") or "").lower()==player_name.lower()),None)
+
+            status["lineup"] = (
+                "confirmed"
+            )
+
+            hit = next(
+                (
+                    x
+                    for x in lineup
+                    if (
+                        x.get("name")
+                        or ""
+                    ).lower()
+                    == player_name.lower()
+                ),
+                None,
+            )
+
             if hit:
-                status["batting_order"]=hit["order"]
-                status["projection_multiplier"] *= _lineup_pa_multiplier(hit["order"])
+
+                status[
+                    "batting_order"
+                ] = hit["order"]
+
+                status[
+                    "projection_multiplier"
+                ] *= _lineup_pa_multiplier(
+                    hit["order"]
+                )
+
             else:
-                status["notes"].append("Team lineup is posted, but selected player is not in the confirmed batting order.")
+
+                status["notes"].append(
+                    "Team lineup is posted, "
+                    "but selected player is not "
+                    "in the confirmed batting order."
+                )
+
         else:
-            status["notes"].append("Confirmed batting order is not posted. Lineup adjustment NOT applied.")
 
-    # Probable/announced opponent starter from MLB schedule only.
-    player_side="home" if int(team_id)==game["home_id"] else "away"
-    opp_prob = game["away_probable"] if player_side=="home" else game["home_probable"]
-    if opp_prob and opp_prob.get("id"):
-        status["opposing_starter"]="available"
-        status["starter_name"]=opp_prob.get("fullName")
-        pd=_person_details(opp_prob["id"])
-        status["starter_hand"]=pd.get("pitch_hand")
+            status["notes"].append(
+                "Confirmed batting order is not posted. "
+                "Lineup adjustment NOT applied."
+            )
 
-    p=find_player(player_name)
+    # --------------------------------------------------------
+    # OPPOSING STARTER
+    # --------------------------------------------------------
+
+    player_side = (
+        "home"
+        if int(team_id)
+        == game["home_id"]
+        else "away"
+    )
+
+    opp_prob = (
+        game["away_probable"]
+        if player_side == "home"
+        else game["home_probable"]
+    )
+
+    if (
+        opp_prob
+        and opp_prob.get("id")
+    ):
+
+        status[
+            "opposing_starter"
+        ] = "available"
+
+        status[
+            "starter_name"
+        ] = opp_prob.get(
+            "fullName"
+        )
+
+        pd = _person_details(
+            opp_prob["id"]
+        )
+
+        status[
+            "starter_hand"
+        ] = pd.get(
+            "pitch_hand"
+        )
+
+    # --------------------------------------------------------
+    # PLAYER HAND
+    # --------------------------------------------------------
+
+    p = find_player(
+        player_name
+    )
+
     if p:
-        pd=_person_details(p["id"])
-        status["player_hand"]=pd.get("bat_side") if player_type=="hitter" else pd.get("pitch_hand")
 
-    # We expose handedness, but do not invent a split adjustment unless a verified split
-    # endpoint is added/backtested.
-    if status["player_hand"] and status["starter_hand"]:
-        status["handedness_split"]="hands verified; split adjustment unavailable"
-        status["notes"].append("Player/starter hands verified. No unverified handedness split multiplier applied.")
+        pd = _person_details(
+            p["id"]
+        )
 
-    group="hitting" if player_type=="hitter" else "pitching"
+        status["player_hand"] = (
+            pd.get("bat_side")
+            if player_type == "hitter"
+            else pd.get("pitch_hand")
+        )
+
+    # --------------------------------------------------------
+    # HANDEDNESS
+    # --------------------------------------------------------
+
+    if (
+        status["player_hand"]
+        and status["starter_hand"]
+    ):
+
+        status[
+            "handedness_split"
+        ] = (
+            "hands verified; "
+            "split adjustment unavailable"
+        )
+
+        status["notes"].append(
+            "Player/starter hands verified. "
+            "No unverified handedness split "
+            "multiplier applied."
+        )
+
+    # --------------------------------------------------------
+    # EXPECTED OPPORTUNITY
+    # --------------------------------------------------------
+
+    group = (
+        "hitting"
+        if player_type == "hitter"
+        else "pitching"
+    )
+
     if p:
-        games=player_game_log(p["id"], season, group)
-        if player_type=="hitter":
-            status["expected_pa"]=_recent_plate_appearances(games)
-            status["expected_opportunity"]="available" if status["expected_pa"] is not None else "unavailable"
+
+        games = player_game_log(
+            p["id"],
+            season,
+            group,
+        )
+
+        if player_type == "hitter":
+
+            status[
+                "expected_pa"
+            ] = _recent_plate_appearances(
+                games
+            )
+
+            status[
+                "expected_opportunity"
+            ] = (
+                "available"
+                if status["expected_pa"]
+                is not None
+                else "unavailable"
+            )
+
         else:
-            status["expected_outs"]=_recent_pitcher_outs(games)
-            status["expected_opportunity"]="available" if status["expected_outs"] is not None else "unavailable"
 
-    # Injury feed is intentionally not guessed here. Until a reliable source is wired,
-    # display unavailable and apply zero injury adjustment.
-    status["notes"].append("Injury adjustment: data unavailable, so no injury adjustment applied.")
-    if status["weather"]=="unavailable":
-        status["notes"].append("Weather data unavailable, so no weather adjustment applied.")
+            status[
+                "expected_outs"
+            ] = _recent_pitcher_outs(
+                games
+            )
+
+            status[
+                "expected_opportunity"
+            ] = (
+                "available"
+                if status["expected_outs"]
+                is not None
+                else "unavailable"
+            )
+
+    # --------------------------------------------------------
+    # INJURY / WEATHER
+    # --------------------------------------------------------
+
+    status["notes"].append(
+        "Injury adjustment: data unavailable, "
+        "so no injury adjustment applied."
+    )
+
+    if status["weather"] == "unavailable":
+
+        status["notes"].append(
+            "Weather data unavailable, "
+            "so no weather adjustment applied."
+        )
+
     return status
 
-def analyze_mlb_verified(player_name, player_type, prop, line, team_id, opponent_id, opponent_name=None, season=None):
-    result=analyze_mlb(player_name, player_type, prop, line, opponent_name, season)
-    pre=verified_pregame_context(player_name, player_type, team_id, opponent_id, season)
-    base=result["projection"]
-    result["projection_before_pregame"]=base
-    result["projection"] = base * pre["projection_multiplier"]
 
-    # Recompute probability after verified opportunity adjustment.
-    result["p_more"]=count_prob_more(float(line), result["projection"])
-    result["p_less"]=1.0-result["p_more"]
-    best=max(result["p_more"],result["p_less"])
-    result["lean"]="MORE" if result["p_more"]>result["p_less"] else "LESS"
-    result["confidence"]="PASS" if best<0.58 else ("MODERATE" if best<0.65 else "HIGH")
-    if result["confidence"]=="PASS":
-        result["lean"]="PASS"
-    result["pregame"]=pre
+# ============================================================
+# VERIFIED ANALYSIS
+# ============================================================
+
+def analyze_mlb_verified(
+    player_name,
+    player_type,
+    prop,
+    line,
+    team_id,
+    opponent_id,
+    opponent_name=None,
+    season=None,
+):
+
+    result = analyze_mlb(
+        player_name,
+        player_type,
+        prop,
+        line,
+        opponent_name,
+        season,
+    )
+
+    pre = verified_pregame_context(
+        player_name,
+        player_type,
+        team_id,
+        opponent_id,
+        season,
+    )
+
+    base = result[
+        "projection"
+    ]
+
+    result[
+        "projection_before_pregame"
+    ] = base
+
+    result["projection"] = (
+        base
+        * pre[
+            "projection_multiplier"
+        ]
+    )
+
+    # --------------------------------------------------------
+    # IMPORTANT:
+    # Recalculate probability using the NEW model,
+    # NOT Poisson for everything.
+    # --------------------------------------------------------
+
+    values = result.get(
+        "_values",
+        [],
+    )
+
+    result[
+        "p_more"
+    ] = mlb_prop_probability(
+        prop.lower(),
+        float(line),
+        result["projection"],
+        values,
+    )
+
+    result[
+        "p_less"
+    ] = (
+        1.0
+        - result["p_more"]
+    )
+
+    best = max(
+        result["p_more"],
+        result["p_less"],
+    )
+
+    result["lean"] = (
+        "MORE"
+        if result["p_more"]
+        > result["p_less"]
+        else "LESS"
+    )
+
+    result["confidence"] = (
+        "PASS"
+        if best < 0.58
+        else (
+            "MODERATE"
+            if best < 0.67
+            else "HIGH"
+        )
+    )
+
+    if (
+        result["confidence"]
+        == "PASS"
+    ):
+
+        result["lean"] = (
+            "PASS"
+        )
+
+    result["pregame"] = pre
+
+    # Internal historical values are not needed
+    # by Flask/templates after analysis.
+    result.pop(
+        "_values",
+        None,
+    )
+
     return result
