@@ -1,55 +1,155 @@
 <!doctype html>
 <html>
 <head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Sports Prop AI</title><link rel="stylesheet" href="/static/style.css">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sports Prop AI</title>
+<link rel="stylesheet" href="/static/style.css">
 </head>
-<body><div class="wrap">
+
+<body>
+<div class="wrap">
+
 <h1>Sports Prop AI</h1>
-<p class="sub">WNBA + MLB — choose a team, then choose a player and opponent.</p>
+<p class="sub">WNBA + MLB player prop analysis.</p>
 
 <form method="post" class="grid" id="form">
-<label>Sport<select name="sport" id="sport"><option>WNBA</option><option>MLB</option></select></label>
-<label id="typeBox">Player type<select name="player_type" id="player_type"><option value="hitter">Hitter</option><option value="pitcher">Pitcher</option></select></label>
-<label>Team<select name="team" id="team" required><option value="">Loading teams…</option></select></label>
-<label>Player<select name="player" id="player" required><option value="">Choose team first</option></select></label>
-<label>Opponent<select name="opponent" id="opponent"><option value="">Choose opponent</option></select></label>
-<label>Prop<select name="prop" id="prop"></select></label>
-<label>Line<input name="line" value="{{form.line}}" required placeholder="8.5"></label>
-<label id="spreadBox">Team spread<input name="spread" value="{{form.spread}}" placeholder="-12.5"></label>
+
+<label>
+Sport
+<select name="sport" id="sport">
+<option value="WNBA">WNBA</option>
+<option value="MLB">MLB</option>
+</select>
+</label>
+
+<label id="dateBox">
+Game date
+<input type="date" name="date" id="gameDate" value="{{form.date}}" required>
+</label>
+
+<label id="typeBox">
+Player type
+<select name="player_type" id="player_type">
+<option value="hitter">Hitter</option>
+<option value="pitcher">Pitcher</option>
+</select>
+</label>
+
+<label>
+Team
+<select name="team" id="team" required>
+<option value="">Loading teams…</option>
+</select>
+</label>
+
+<label>
+Player
+<select name="player" id="player" required>
+<option value="">Choose team first</option>
+</select>
+</label>
+
+<label>
+Opponent
+<select name="opponent" id="opponent" required>
+<option value="">Automatic after team selection</option>
+</select>
+</label>
+
+<label>
+Prop
+<select name="prop" id="prop"></select>
+</label>
+
+<label>
+Line
+<input name="line" value="{{form.line}}" required placeholder="8.5">
+</label>
+
+<label id="spreadBox">
+Team spread
+<input name="spread" value="{{form.spread}}" placeholder="-12.5">
+</label>
+
 <button>Analyze</button>
 </form>
+
 <p id="loadStatus" class="sub"></p>
 
-<div id="mlbMatchupBox" class="card matchup-auto" style="display:none">
-  <h3>Automatic MLB matchup</h3>
-  <div class="pitcher-grid">
-    <div>
-      <span class="small">YOUR TEAM'S PROBABLE STARTER</span>
-      <p id="teamProbable"><b>DATA UNAVAILABLE</b></p>
-    </div>
-    <div>
-      <span class="small">OPPONENT'S PROBABLE STARTER</span>
-      <p id="oppProbable"><b>DATA UNAVAILABLE</b></p>
-    </div>
-  </div>
-  <p id="matchupGame" class="small"></p>
-  <p id="matchupRule" class="small">If MLB has not posted a probable starter, Sports Prop AI does not guess.</p>
+<div id="wnbaMatchupBox" class="card matchup-auto" style="display:none">
+<h3>Automatic WNBA matchup</h3>
+<p id="wnbaGame"><b>Select a date and team.</b></p>
+<p class="small">Only teams playing on the selected date are shown. Opponent is automatic.</p>
 </div>
 
-{% if error %}<div class="error">{{error}}</div>{% endif %}
+<div id="mlbMatchupBox" class="card matchup-auto" style="display:none">
+<h3>Automatic MLB matchup</h3>
+
+<div class="pitcher-grid">
+<div>
+<span class="small">YOUR TEAM'S PROBABLE STARTER</span>
+<p id="teamProbable"><b>DATA UNAVAILABLE</b></p>
+</div>
+
+<div>
+<span class="small">OPPONENT'S PROBABLE STARTER</span>
+<p id="oppProbable"><b>DATA UNAVAILABLE</b></p>
+</div>
+</div>
+
+<p id="matchupGame" class="small"></p>
+<p id="matchupRule" class="small">
+When Pitcher is selected, your team's posted probable starter is automatically selected.
+If no starter has been posted, Sports Prop AI does not guess.
+</p>
+</div>
+
+{% if error %}
+<div class="error">{{error}}</div>
+{% endif %}
 
 {% if result %}
+
 <section class="card hero">
-<div class="eyebrow">{{result.sport}} · {{result.player}} · {{result.prop}}{% if result.opponent %} · vs {{result.opponent}}{% endif %}</div>
-<h2>{{result.lean}}</h2><div class="big">{{"%.2f"|format(result.projection)}}</div>
-<div>projection vs {{"%.1f"|format(result.line)}} line</div><strong>{{result.confidence}} CONFIDENCE</strong>
+<div class="eyebrow">
+{{result.sport}} · {{result.player}} · {{result.prop}}
+{% if result.opponent %} · vs {{result.opponent}}{% endif %}
+</div>
+
+<h2>{{result.lean}}</h2>
+
+<div class="big">
+{{"%.2f"|format(result.projection)}}
+</div>
+
+<div>
+projection vs {{"%.1f"|format(result.line)}} line
+</div>
+
+<strong>{{result.confidence}} CONFIDENCE</strong>
 </section>
+
 <section class="cards">
-<div class="card"><h3>Probability</h3><p>MORE <b>{{"%.1f"|format(result.p_more*100)}}%</b></p><p>LESS <b>{{"%.1f"|format(result.p_less*100)}}%</b></p></div>
+
+<div class="card">
+<h3>Probability</h3>
+<p>MORE <b>{{"%.1f"|format(result.p_more*100)}}%</b></p>
+<p>LESS <b>{{"%.1f"|format(result.p_less*100)}}%</b></p>
+</div>
+
 {% if result.sport=="MLB" %}
-<div class="card"><h3>Baseline</h3><p>Season <b>{{"%.2f"|format(result.season_avg)}}</b></p><p>L20 <b>{{"%.2f"|format(result.l20)}}</b></p><p>L10 <b>{{"%.2f"|format(result.l10)}}</b></p><p>L5 <b>{{"%.2f"|format(result.l5)}}</b></p></div>
-<div class="card"><h3>Today's game context</h3>
+
+<div class="card">
+<h3>Baseline</h3>
+<p>Season <b>{{"%.2f"|format(result.season_avg)}}</b></p>
+<p>L20 <b>{{"%.2f"|format(result.l20)}}</b></p>
+<p>L10 <b>{{"%.2f"|format(result.l10)}}</b></p>
+<p>L5 <b>{{"%.2f"|format(result.l5)}}</b></p>
+</div>
+
+<div class="card">
+<h3>Today's game context</h3>
 {% if context %}
 {% for g in context %}
 <p><b>{{g.away}} @ {{g.home}}</b></p>
@@ -57,10 +157,21 @@
 <p>Home probable: {{g.home_probable or "Not posted"}}</p>
 <p>Status: {{g.status}}</p>
 {% endfor %}
-{% else %}<p>No matching game/probable-pitcher data posted yet.</p>{% endif %}
+{% else %}
+<p>No matching game/probable-pitcher data posted yet.</p>
+{% endif %}
 </div>
-<div class="card"><h3>H2H support</h3><p>Games <b>{{result.h2h_games}}</b></p>{% if result.h2h_avg is not none %}<p>Average <b>{{"%.2f"|format(result.h2h_avg)}}</b></p>{% endif %}</div>
-<div class="card pregame"><h3>Verified pregame data</h3>
+
+<div class="card">
+<h3>H2H support</h3>
+<p>Games <b>{{result.h2h_games}}</b></p>
+{% if result.h2h_avg is not none %}
+<p>Average <b>{{"%.2f"|format(result.h2h_avg)}}</b></p>
+{% endif %}
+</div>
+
+<div class="card pregame">
+<h3>Verified pregame data</h3>
 <p>Confirmed lineup: <b>{{result.pregame.lineup|upper}}</b></p>
 <p>Batting order: <b>{{result.pregame.batting_order if result.pregame.batting_order else "DATA UNAVAILABLE"}}</b></p>
 <p>Opposing starter: <b>{{result.pregame.starter_name or "DATA UNAVAILABLE"}}</b></p>
@@ -73,120 +184,482 @@
 <p>Weather: <b>{{result.pregame.weather_text or "DATA UNAVAILABLE"}}</b></p>
 <p>Injuries: <b>{{result.pregame.injuries|upper}}</b></p>
 </div>
-<div class="card"><h3>Pregame adjustment audit</h3>
+
+<div class="card">
+<h3>Pregame adjustment audit</h3>
 <p>Before: <b>{{"%.2f"|format(result.projection_before_pregame)}}</b></p>
 <p>Verified multiplier: <b>{{"%.3f"|format(result.pregame.projection_multiplier)}}x</b></p>
 <p>After: <b>{{"%.2f"|format(result.projection)}}</b></p>
-{% for note in result.pregame.notes %}<p class="small">• {{note}}</p>{% endfor %}
+{% for note in result.pregame.notes %}
+<p class="small">• {{note}}</p>
+{% endfor %}
 </div>
+
 {% else %}
-<div class="card"><h3>Expected minutes</h3>{% if result.minutes_context %}<p>Season <b>{{"%.1f"|format(result.minutes_context.season_minutes)}}</b></p><p>Recent <b>{{"%.1f"|format(result.minutes_context.recent_minutes)}}</b></p><p>Expected <b>{{"%.1f"|format(result.minutes_context.expected_minutes)}}</b></p>{% endif %}</div>
-<div class="card"><h3>Opponent matchup</h3><p><b>{{result.matchup_label}}</b></p><p>{{"%.3f"|format(result.matchup_multiplier)}}x</p></div>
-<div class="card"><h3>Blowout</h3><p><b>{{result.blowout_level}}</b></p></div>
+
+<div class="card">
+<h3>Expected minutes</h3>
+{% if result.minutes_context %}
+<p>Season <b>{{"%.1f"|format(result.minutes_context.season_minutes)}}</b></p>
+<p>Recent <b>{{"%.1f"|format(result.minutes_context.recent_minutes)}}</b></p>
+<p>Expected <b>{{"%.1f"|format(result.minutes_context.expected_minutes)}}</b></p>
 {% endif %}
+</div>
+
+<div class="card">
+<h3>Opponent matchup</h3>
+<p><b>{{result.matchup_label}}</b></p>
+<p>{{"%.3f"|format(result.matchup_multiplier)}}x</p>
+</div>
+
+<div class="card">
+<h3>Blowout</h3>
+<p><b>{{result.blowout_level}}</b></p>
+</div>
+
+<div class="card">
+<h3>Last 7 — {{result.prop}}</h3>
+
+{% if result.last7 %}
+{% for g in result.last7 %}
+<p>
+<span class="small">
+{{g.date}} ·
+{% if g.home_away and g.home_away|upper == "AWAY" %}@{% else %}vs{% endif %}
+{{g.opponent}}
+</span>
+&nbsp;
+<b>{{g.value}}</b>
+</p>
+{% endfor %}
+{% else %}
+<p>Not available</p>
+{% endif %}
+</div>
+
+<div class="card">
+<h3>{{current_season}} vs {{result.opponent}} — {{result.prop}}</h3>
+
+{% if result.matchup_available %}
+{% for g in result.matchup_games %}
+<p>
+<span class="small">{{g.date}}</span>
+&nbsp;
+<b>{{g.value}}</b>
+</p>
+{% endfor %}
+
+<p>
+Matchup average
+<b>{{"%.1f"|format(result.matchup_average)}}</b>
+</p>
+
+{% else %}
+<p><b>Not available</b></p>
+<p class="small">No {{current_season}} game against this opponent is stored for this player.</p>
+{% endif %}
+</div>
+
+{% endif %}
+
 </section>
 {% endif %}
+
 </div>
 
 <script>
-const WNBA={{wnba_props|tojson}}, HITTER={{hitter_props|tojson}}, PITCHER={{pitcher_props|tojson}};
-const sport=document.querySelector("#sport"), type=document.querySelector("#player_type");
-const team=document.querySelector("#team"), player=document.querySelector("#player");
-const opponent=document.querySelector("#opponent"), prop=document.querySelector("#prop");
-const typeBox=document.querySelector("#typeBox"), spreadBox=document.querySelector("#spreadBox");
-const status=document.querySelector("#loadStatus");
-const posted={sport:"{{form.sport}}",type:"{{form.player_type}}",team:"{{form.team}}",player:"{{form.player}}",opponent:"{{form.opponent}}",prop:"{{form.prop}}"};
+const WNBA={{wnba_props|tojson}};
+const HITTER={{hitter_props|tojson}};
+const PITCHER={{pitcher_props|tojson}};
 
-function pretty(x){return x.replaceAll("_"," ").toUpperCase();}
+const sport=document.querySelector("#sport");
+const type=document.querySelector("#player_type");
+const gameDate=document.querySelector("#gameDate");
+const team=document.querySelector("#team");
+const player=document.querySelector("#player");
+const opponent=document.querySelector("#opponent");
+const prop=document.querySelector("#prop");
+
+const typeBox=document.querySelector("#typeBox");
+const spreadBox=document.querySelector("#spreadBox");
+const statusText=document.querySelector("#loadStatus");
+
+const posted={
+sport:"{{form.sport}}",
+type:"{{form.player_type}}",
+date:"{{form.date}}",
+team:"{{form.team}}",
+player:"{{form.player}}",
+opponent:"{{form.opponent}}",
+prop:"{{form.prop}}"
+};
+
+function pretty(x){
+return x.replaceAll("_"," ").toUpperCase();
+}
+
 function setProps(){
-  const mlb=sport.value==="MLB";
-  typeBox.style.display=mlb?"block":"none"; spreadBox.style.display=mlb?"none":"block";
-  const arr=mlb?(type.value==="pitcher"?PITCHER:HITTER):WNBA;
-  prop.innerHTML="";
-  arr.forEach(x=>{const o=new Option(pretty(x),x); if(x===posted.prop)o.selected=true; prop.add(o);});
+const mlb=sport.value==="MLB";
+
+typeBox.style.display=mlb?"block":"none";
+spreadBox.style.display=mlb?"none":"block";
+
+const arr=mlb
+?(type.value==="pitcher"?PITCHER:HITTER)
+:WNBA;
+
+prop.innerHTML="";
+
+arr.forEach(x=>{
+const o=new Option(pretty(x),x);
+
+if(x===posted.prop){
+o.selected=true;
 }
+
+prop.add(o);
+});
+}
+
 async function loadTeams(){
-  status.textContent="Loading teams…"; team.innerHTML='<option value="">Choose team</option>';
-  opponent.innerHTML='<option value="">Choose opponent</option>'; player.innerHTML='<option value="">Choose team first</option>';
-  try{
-    const r=await fetch("/api/teams?sport="+encodeURIComponent(sport.value)); const data=await r.json();
-    if(data.error) throw new Error(data.error);
-    data.forEach(t=>{
-      const label=t.abbreviation?`${t.abbreviation} — ${t.name}`:t.name;
-      team.add(new Option(label,t.id)); opponent.add(new Option(label,t.id));
-    });
-    if(posted.team){team.value=posted.team;} if(posted.opponent){opponent.value=posted.opponent;}
-    status.textContent="";
-    if(team.value) await loadPlayers();
-  }catch(e){status.textContent="Could not load teams: "+e.message;}
+statusText.textContent="Loading teams…";
+
+team.innerHTML='<option value="">Choose team</option>';
+player.innerHTML='<option value="">Choose team first</option>';
+opponent.innerHTML='<option value="">Automatic after team selection</option>';
+
+try{
+let url=
+"/api/teams?sport="+encodeURIComponent(sport.value)
++"&date="+encodeURIComponent(gameDate.value);
+
+const r=await fetch(url);
+const data=await r.json();
+
+if(data.error){
+throw new Error(data.error);
 }
-async function loadPlayers(){
-  player.innerHTML='<option value="">Loading players…</option>';
-  if(!team.value){player.innerHTML='<option value="">Choose team first</option>';return;}
-  try{
-    const r=await fetch(`/api/players?sport=${encodeURIComponent(sport.value)}&team=${encodeURIComponent(team.value)}`);
-    const data=await r.json(); if(data.error) throw new Error(data.error);
-    player.innerHTML='<option value="">Choose player</option>';
-    data.forEach(p=>{
-      if(sport.value==="MLB"){
-        const isPitcher=(p.position_type||"").toLowerCase()==="pitcher";
-        if(type.value==="pitcher" && !isPitcher) return;
-        if(type.value==="hitter" && isPitcher) return;
-      }
-      player.add(new Option(p.position?`${p.name} — ${p.position}`:p.name,p.name));
-    });
-    if(posted.player) player.value=posted.player;
-  }catch(e){player.innerHTML='<option value="">Could not load players</option>'; status.textContent=e.message;}
+
+data.forEach(t=>{
+let label=t.name;
+
+if(t.abbreviation){
+label=`${t.abbreviation} — ${t.name}`;
 }
-function remember(){localStorage.setItem("sportsPropLastSport",sport.value);}
-sport.value=posted.sport || localStorage.getItem("sportsPropLastSport") || "WNBA";
-type.value=posted.type || "hitter";
-sport.addEventListener("change",async()=>{posted.team="";posted.player="";posted.opponent="";posted.prop="";remember();setProps();await loadTeams();});
-type.addEventListener("change",()=>{posted.player="";posted.prop="";setProps();loadPlayers();});
+
+team.add(new Option(label,t.id));
+});
+
+if(posted.team){
+team.value=posted.team;
+}
+
+if(!data.length){
+statusText.textContent=`No ${sport.value} games scheduled for this date.`;
+}else{
+statusText.textContent="";
+}
+
+if(team.value){
+await handleTeamSelection();
+}
+
+}catch(e){
+statusText.textContent="Could not load teams: "+e.message;
+}
+}
+
+async function loadWNBAPlayers(){
+player.innerHTML='<option value="">Loading players…</option>';
+
+try{
+const r=await fetch(
+`/api/players?sport=WNBA&team=${encodeURIComponent(team.value)}`
+);
+
+const data=await r.json();
+
+if(data.error){
+throw new Error(data.error);
+}
+
+player.innerHTML='<option value="">Choose player</option>';
+
+data.forEach(p=>{
+player.add(new Option(p.name,p.name));
+});
+
+if(posted.player){
+player.value=posted.player;
+}
+
+}catch(e){
+player.innerHTML='<option value="">Could not load players</option>';
+statusText.textContent=e.message;
+}
+}
+
+async function loadMLBHitters(){
+player.innerHTML='<option value="">Loading hitters…</option>';
+
+try{
+const r=await fetch(
+`/api/players?sport=MLB&team=${encodeURIComponent(team.value)}`
+);
+
+const data=await r.json();
+
+if(data.error){
+throw new Error(data.error);
+}
+
+player.innerHTML='<option value="">Choose hitter</option>';
+
+data.forEach(p=>{
+const isPitcher=(p.position_type||"").toLowerCase()==="pitcher";
+
+if(isPitcher){
+return;
+}
+
+player.add(
+new Option(
+p.position?`${p.name} — ${p.position}`:p.name,
+p.name
+)
+);
+});
+
+if(posted.player){
+player.value=posted.player;
+}
+
+}catch(e){
+player.innerHTML='<option value="">Could not load hitters</option>';
+statusText.textContent=e.message;
+}
+}
+
+async function loadWNBAOpponent(){
+const box=document.querySelector("#wnbaMatchupBox");
+const text=document.querySelector("#wnbaGame");
+
+if(sport.value!=="WNBA"){
+box.style.display="none";
+return;
+}
+
+box.style.display="block";
+
+opponent.innerHTML='<option value="">Automatic opponent</option>';
+
+if(!gameDate.value || !team.value){
+text.innerHTML="<b>Select a date and team.</b>";
+return;
+}
+
+text.innerHTML="<b>Checking schedule…</b>";
+
+try{
+const r=await fetch(
+`/api/wnba-opponent?date=${encodeURIComponent(gameDate.value)}&team=${encodeURIComponent(team.value)}`
+);
+
+const d=await r.json();
+
+if(d.error){
+throw new Error(d.error);
+}
+
+if(!d.found || !d.opponent){
+text.innerHTML="<b>No matchup found.</b>";
+return;
+}
+
+const opp=d.opponent;
+const label=`${opp.abbreviation} — ${opp.name}`;
+
+opponent.innerHTML="";
+opponent.add(new Option(label,opp.abbreviation,true,true));
+
+text.innerHTML=
+`<b>${d.team.abbreviation} vs ${opp.abbreviation}</b> · ${d.status || "Status unavailable"}`;
+
+}catch(e){
+text.innerHTML="<b>Could not load automatic opponent.</b>";
+statusText.textContent=e.message;
+}
+}
+
 async function loadMLBMatchup(){
-  const box=document.querySelector("#mlbMatchupBox");
-  const tp=document.querySelector("#teamProbable");
-  const op=document.querySelector("#oppProbable");
-  const gm=document.querySelector("#matchupGame");
+const box=document.querySelector("#mlbMatchupBox");
+const tp=document.querySelector("#teamProbable");
+const op=document.querySelector("#oppProbable");
+const gm=document.querySelector("#matchupGame");
 
-  if(sport.value!=="MLB"){
-    box.style.display="none";
-    return;
-  }
-  box.style.display="block";
-
-  if(!team.value || !opponent.value){
-    tp.innerHTML="<b>DATA UNAVAILABLE</b>";
-    op.innerHTML="<b>DATA UNAVAILABLE</b>";
-    gm.textContent="Select a team and opponent to load today's probable pitchers.";
-    return;
-  }
-
-  tp.innerHTML="<b>CHECKING…</b>";
-  op.innerHTML="<b>CHECKING…</b>";
-  gm.textContent="Checking MLB's posted matchup…";
-
-  try{
-    const r=await fetch(`/api/mlb-matchup?team=${encodeURIComponent(team.value)}&opponent=${encodeURIComponent(opponent.value)}`);
-    const d=await r.json();
-    if(!d.found){
-      tp.innerHTML="<b>DATA UNAVAILABLE</b>";
-      op.innerHTML="<b>DATA UNAVAILABLE</b>";
-      gm.textContent=d.message || "No matching game/probable-pitcher data posted.";
-      return;
-    }
-    tp.innerHTML=`<b>${d.team_probable || "DATA UNAVAILABLE"}</b>`;
-    op.innerHTML=`<b>${d.opponent_probable || "DATA UNAVAILABLE"}</b>`;
-    gm.textContent=`${d.away} @ ${d.home} · ${d.status || "Status unavailable"}`;
-  }catch(e){
-    tp.innerHTML="<b>DATA UNAVAILABLE</b>";
-    op.innerHTML="<b>DATA UNAVAILABLE</b>";
-    gm.textContent="Could not retrieve probable pitchers. No pitcher matchup adjustment will be guessed.";
-  }
+if(sport.value!=="MLB"){
+box.style.display="none";
+return null;
 }
 
-team.addEventListener("change",async()=>{posted.player="";await loadPlayers();await loadMLBMatchup();});
-opponent.addEventListener("change",loadMLBMatchup);
-sport.addEventListener("change",loadMLBMatchup);
-setProps(); loadTeams().then(loadMLBMatchup); remember();
-</script></body></html>
+box.style.display="block";
+
+opponent.innerHTML='<option value="">Automatic opponent</option>';
+
+if(!gameDate.value || !team.value){
+tp.innerHTML="<b>DATA UNAVAILABLE</b>";
+op.innerHTML="<b>DATA UNAVAILABLE</b>";
+gm.textContent="Select a date and team.";
+return null;
+}
+
+tp.innerHTML="<b>CHECKING…</b>";
+op.innerHTML="<b>CHECKING…</b>";
+gm.textContent="Checking MLB schedule…";
+
+try{
+const r=await fetch(
+`/api/mlb-matchup?date=${encodeURIComponent(gameDate.value)}&team=${encodeURIComponent(team.value)}`
+);
+
+const d=await r.json();
+
+if(!d.found){
+tp.innerHTML="<b>DATA UNAVAILABLE</b>";
+op.innerHTML="<b>DATA UNAVAILABLE</b>";
+gm.textContent=d.message || "No matching MLB game found.";
+return d;
+}
+
+const opp=d.opponent;
+
+opponent.innerHTML="";
+opponent.add(
+new Option(
+opp.abbreviation?`${opp.abbreviation} — ${opp.name}`:opp.name,
+opp.id,
+true,
+true
+)
+);
+
+tp.innerHTML=`<b>${d.team_probable || "NOT ANNOUNCED"}</b>`;
+op.innerHTML=`<b>${d.opponent_probable || "NOT ANNOUNCED"}</b>`;
+gm.textContent=`${d.away} @ ${d.home} · ${d.status || "Status unavailable"}`;
+
+return d;
+
+}catch(e){
+tp.innerHTML="<b>DATA UNAVAILABLE</b>";
+op.innerHTML="<b>DATA UNAVAILABLE</b>";
+gm.textContent="Could not retrieve MLB matchup.";
+statusText.textContent=e.message;
+return null;
+}
+}
+
+async function setMLBPitcher(){
+player.innerHTML='<option value="">Checking probable starter…</option>';
+
+const d=await loadMLBMatchup();
+
+if(!d || !d.found){
+player.innerHTML='<option value="">No MLB matchup found</option>';
+return;
+}
+
+if(!d.team_probable){
+player.innerHTML='<option value="">Probable pitcher not announced yet</option>';
+return;
+}
+
+player.innerHTML="";
+
+player.add(
+new Option(
+`${d.team_probable} — Probable Starter`,
+d.team_probable,
+true,
+true
+)
+);
+}
+
+async function handleTeamSelection(){
+if(!team.value){
+player.innerHTML='<option value="">Choose team first</option>';
+opponent.innerHTML='<option value="">Automatic after team selection</option>';
+return;
+}
+
+if(sport.value==="WNBA"){
+await loadWNBAOpponent();
+await loadWNBAPlayers();
+return;
+}
+
+if(type.value==="pitcher"){
+await setMLBPitcher();
+}else{
+await loadMLBMatchup();
+await loadMLBHitters();
+}
+}
+
+function remember(){
+localStorage.setItem("sportsPropLastSport",sport.value);
+}
+
+sport.value=
+posted.sport ||
+localStorage.getItem("sportsPropLastSport") ||
+"WNBA";
+
+type.value=posted.type || "hitter";
+
+if(posted.date){
+gameDate.value=posted.date;
+}
+
+sport.addEventListener("change",async()=>{
+posted.team="";
+posted.player="";
+posted.opponent="";
+posted.prop="";
+
+remember();
+setProps();
+await loadTeams();
+});
+
+gameDate.addEventListener("change",async()=>{
+posted.team="";
+posted.player="";
+posted.opponent="";
+await loadTeams();
+});
+
+type.addEventListener("change",async()=>{
+posted.player="";
+posted.prop="";
+
+setProps();
+
+if(team.value){
+await handleTeamSelection();
+}
+});
+
+team.addEventListener("change",async()=>{
+posted.player="";
+posted.opponent="";
+await handleTeamSelection();
+});
+
+setProps();
+loadTeams();
+remember();
+</script>
+
+</body>
+</html>
