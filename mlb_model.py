@@ -1542,70 +1542,277 @@ def _lineup_pa_multiplier(slot):
 
 def _pitcher_season_quality(person_id, season):
     """
-    Fetch current-season pitching quality for the verified
-    opposing starter.
+    Fetch verified MLB pitching quality.
 
-    Returns None when MLB data is unavailable.
+    Priority:
+    1. Established current-season sample.
+    2. Blend current + previous season for small samples.
+    3. Previous-season fallback if current data is unavailable.
+    4. Conservative current-season data for pitchers with
+       limited MLB history.
 
-    IMPORTANT:
-    This does not guess missing statistics.
+    Missing statistics are never invented.
     """
 
-    try:
-        url = (
-            f"https://statsapi.mlb.com/api/v1/people/{int(person_id)}/stats"
-            f"?stats=season&group=pitching&season={int(season)}"
-        )
-
-        data = _json(url)
-
-        splits = []
-
-        for block in data.get("stats", []):
-            splits.extend(block.get("splits", []))
-
-        if not splits:
-            return None
-
-        stat = splits[0].get("stat", {}) or {}
-
-        def n(key):
-            value = stat.get(key)
-
-            if value in (None, "", "-", ".---"):
-                return None
-
-            try:
-                return float(value)
-            except (TypeError, ValueError):
-                return None
-
-        era = n("era")
-        whip = n("whip")
-        k9 = n("strikeoutsPer9Inn")
-        bb9 = n("walksPer9Inn")
-        h9 = n("hitsPer9Inn")
-        hr9 = n("homeRunsPer9")
-
-        innings = stat.get("inningsPitched")
+    def fetch(target_season):
 
         try:
-            innings = float(innings)
-        except (TypeError, ValueError):
-            innings = None
+            url = (
+                f"{MLB_API}/v1/people/{int(person_id)}/stats"
+                f"?stats=season"
+                f"&group=pitching"
+                f"&season={int(target_season)}"
+            )
 
-        return {
-            "era": era,
-            "whip": whip,
-            "k9": k9,
-            "bb9": bb9,
-            "h9": h9,
-            "hr9": hr9,
-            "innings": innings,
-        }
+            data = _json(url)
 
-    except Exception:
-        return None
+            splits = []
+
+            for block in data.get("stats", []):
+                splits.extend(
+                    block.get("splits", [])
+                )
+
+            if not splits:
+                return None
+
+            stat = (
+                splits[0].get("stat", {})
+                or {}
+            )
+
+            def number(key):
+
+                value = stat.get(key)
+
+                if value in (
+                    None,
+                    "",
+                    "-",
+                    ".---",
+                ):
+                    return None
+
+                try:
+                    return float(value)
+
+                except (
+                    TypeError,
+                    ValueError,
+                ):
+                    return None
+
+            innings = stat.get(
+                "inningsPitched"
+            )
+
+            try:
+                innings = float(innings)
+
+            except (
+                TypeError,
+                ValueError,
+            ):
+                innings = None
+
+            result = {
+                "era": number("era"),
+                "whip": number("whip"),
+                "k9": number(
+                    "strikeoutsPer9Inn"
+                ),
+                "bb9": number(
+                    "walksPer9Inn"
+                ),
+                "h9": number(
+                    "hitsPer9Inn"
+                ),
+                "hr9": number(
+                    "homeRunsPer9"
+                ),
+                "innings": innings,
+                "season": int(
+                    target_season
+                ),
+            }
+
+            useful = [
+                result["era"],
+                result["whip"],
+                result["k9"],
+                result["h9"],
+            ]
+
+            if all(
+                value is None
+                for value in useful
+            ):
+                return None
+
+            return result
+
+        except Exception:
+            return None
+
+    current = fetch(season)
+
+    previous = fetch(
+        int(season) - 1
+    )
+
+    # No current-season MLB data.
+    if current is None:
+
+        if previous is None:
+            return None
+
+        previous[
+            "data_source"
+        ] = "PRIOR SEASON"
+
+        previous[
+            "sample_reliability"
+        ] = 0.65
+
+        return previous
+
+    current_ip = float(
+        current.get("innings")
+        or 0.0
+    )
+
+    # Established current-season sample.
+    if current_ip >= 40:
+
+        current[
+            "data_source"
+        ] = "CURRENT SEASON"
+
+        current[
+            "sample_reliability"
+        ] = min(
+            1.0,
+            max(
+                0.55,
+                current_ip / 100.0,
+            ),
+        )
+
+        return current
+
+    # Small current sample + previous MLB season.
+    if previous is not None:
+
+        previous_ip = float(
+            previous.get("innings")
+            or 0.0
+        )
+
+        current_weight = min(
+            0.70,
+            max(
+                0.25,
+                current_ip / 40.0,
+            ),
+        )
+
+        if previous_ip < 20:
+            current_weight = max(
+                current_weight,
+                0.60,
+            )
+
+        prior_weight = (
+            1.0 - current_weight
+        )
+
+        blended = {}
+
+        for key in (
+            "era",
+            "whip",
+            "k9",
+            "bb9",
+            "h9",
+            "hr9",
+        ):
+
+            c = current.get(key)
+            p = previous.get(key)
+
+            if (
+                c is not None
+                and p is not None
+            ):
+                blended[key] = (
+                    current_weight * c
+                    + prior_weight * p
+                )
+
+            elif c is not None:
+                blended[key] = c
+
+            else:
+                blended[key] = p
+
+        blended[
+            "innings"
+        ] = current_ip
+
+        blended[
+            "season"
+        ] = int(season)
+
+        blended[
+            "current_innings"
+        ] = current_ip
+
+        blended[
+            "prior_innings"
+        ] = previous_ip
+
+        blended[
+            "data_source"
+        ] = "CURRENT + PRIOR BLEND"
+
+        blended[
+            "sample_reliability"
+        ] = min(
+            0.85,
+            max(
+                0.40,
+                (
+                    current_ip
+                    + (
+                        min(
+                            previous_ip,
+                            80.0,
+                        )
+                        * 0.50
+                    )
+                )
+                / 80.0,
+            ),
+        )
+
+        return blended
+
+    # Rookie / spot starter / limited MLB history.
+    current[
+        "data_source"
+    ] = "LIMITED CURRENT SEASON"
+
+    current[
+        "sample_reliability"
+    ] = min(
+        0.60,
+        max(
+            0.20,
+            current_ip / 40.0,
+        ),
+    )
+
+    return current
 
 
 def _starter_matchup_multiplier(stats):
@@ -1692,9 +1899,28 @@ def _starter_matchup_multiplier(stats):
 
     innings = stats.get("innings")
 
-    if innings is None:
+    explicit_reliability = stats.get(
+        "sample_reliability"
+    )
+
+    if explicit_reliability is not None:
+
+        reliability = max(
+            0.20,
+            min(
+                1.0,
+                float(
+                    explicit_reliability
+                ),
+            ),
+        )
+
+    elif innings is None:
+
         reliability = 0.60
+
     else:
+
         reliability = min(
             1.0,
             max(
@@ -1836,6 +2062,8 @@ def verified_pregame_context(
         ),
 
         "lineup": "unavailable",
+
+        "in_starting_lineup": None,
 
         "batting_order": None,
 
@@ -1991,6 +2219,10 @@ def verified_pregame_context(
             if hit:
 
                 status[
+                    "in_starting_lineup"
+                ] = True
+
+                status[
                     "batting_order"
                 ] = hit["order"]
 
@@ -2001,6 +2233,10 @@ def verified_pregame_context(
                 )
 
             else:
+
+                status[
+                    "in_starting_lineup"
+                ] = False
 
                 status["notes"].append(
                     "Team lineup is posted, "
@@ -2098,10 +2334,16 @@ def verified_pregame_context(
 
             if starter_stats:
 
+                source = starter_stats.get(
+                    "data_source",
+                    "CURRENT SEASON",
+                )
+
                 status["notes"].append(
                     "Verified opposing starter quality "
                     f"applied: {starter_label} matchup "
-                    f"(x{starter_mult:.3f})."
+                    f"(x{starter_mult:.3f}). "
+                    f"Pitcher data: {source}."
                 )
 
             else:
@@ -2347,6 +2589,31 @@ def analyze_mlb_verified(
 
         result["lean"] = (
             "PASS"
+        )
+
+    # --------------------------------------------------------
+    # CONFIRMED LINEUP SAFETY GATE
+    # --------------------------------------------------------
+
+    if (
+        player_type.lower() == "hitter"
+        and pre.get(
+            "in_starting_lineup"
+        ) is False
+    ):
+
+        result[
+            "lean"
+        ] = "PASS"
+
+        result[
+            "confidence"
+        ] = "PASS"
+
+        result[
+            "lineup_warning"
+        ] = (
+            "NOT IN CONFIRMED STARTING LINEUP"
         )
 
     result["pregame"] = pre
