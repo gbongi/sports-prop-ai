@@ -1535,6 +1535,272 @@ def _lineup_pa_multiplier(slot):
 # VERIFIED PREGAME
 # ============================================================
 
+
+# ============================================================
+# VERIFIED STARTING-PITCHER QUALITY
+# ============================================================
+
+def _pitcher_season_quality(person_id, season):
+    """
+    Fetch current-season pitching quality for the verified
+    opposing starter.
+
+    Returns None when MLB data is unavailable.
+
+    IMPORTANT:
+    This does not guess missing statistics.
+    """
+
+    try:
+        url = (
+            f"https://statsapi.mlb.com/api/v1/people/{int(person_id)}/stats"
+            f"?stats=season&group=pitching&season={int(season)}"
+        )
+
+        data = _json(url)
+
+        splits = []
+
+        for block in data.get("stats", []):
+            splits.extend(block.get("splits", []))
+
+        if not splits:
+            return None
+
+        stat = splits[0].get("stat", {}) or {}
+
+        def n(key):
+            value = stat.get(key)
+
+            if value in (None, "", "-", ".---"):
+                return None
+
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return None
+
+        era = n("era")
+        whip = n("whip")
+        k9 = n("strikeoutsPer9Inn")
+        bb9 = n("walksPer9Inn")
+        h9 = n("hitsPer9Inn")
+        hr9 = n("homeRunsPer9")
+
+        innings = stat.get("inningsPitched")
+
+        try:
+            innings = float(innings)
+        except (TypeError, ValueError):
+            innings = None
+
+        return {
+            "era": era,
+            "whip": whip,
+            "k9": k9,
+            "bb9": bb9,
+            "h9": h9,
+            "hr9": hr9,
+            "innings": innings,
+        }
+
+    except Exception:
+        return None
+
+
+def _starter_matchup_multiplier(stats):
+    """
+    Convert verified starter quality into a conservative
+    hitter projection multiplier.
+
+    < 1.00 = difficult pitcher matchup
+    > 1.00 = favorable pitcher matchup
+
+    The adjustment is deliberately capped. Starting-pitcher
+    quality should matter, but should never completely replace
+    the hitter's own historical production.
+    """
+
+    if not stats:
+        return 1.0, "unavailable", 0.0
+
+    # Approximate neutral MLB run-environment reference points.
+    # These are anchors, not claims about the exact league
+    # average for every season.
+    neutral = {
+        "era": 4.20,
+        "whip": 1.30,
+        "k9": 8.50,
+        "bb9": 3.20,
+        "h9": 8.50,
+        "hr9": 1.15,
+    }
+
+    score = 0.0
+    used = 0.0
+
+    # Lower ERA is harder for a hitter.
+    if stats.get("era") is not None:
+        score += (
+            (stats["era"] - neutral["era"]) / 1.50
+        ) * 0.30
+        used += 0.30
+
+    # Lower WHIP is harder for a hitter.
+    if stats.get("whip") is not None:
+        score += (
+            (stats["whip"] - neutral["whip"]) / 0.30
+        ) * 0.25
+        used += 0.25
+
+    # Higher K/9 is harder for a hitter.
+    if stats.get("k9") is not None:
+        score += (
+            (neutral["k9"] - stats["k9"]) / 3.00
+        ) * 0.20
+        used += 0.20
+
+    # Lower H/9 is harder for a hitter.
+    if stats.get("h9") is not None:
+        score += (
+            (stats["h9"] - neutral["h9"]) / 2.00
+        ) * 0.12
+        used += 0.12
+
+    # Lower HR/9 is harder for fantasy-score upside.
+    if stats.get("hr9") is not None:
+        score += (
+            (stats["hr9"] - neutral["hr9"]) / 0.70
+        ) * 0.08
+        used += 0.08
+
+    # Lower BB/9 slightly reduces free-base opportunities.
+    if stats.get("bb9") is not None:
+        score += (
+            (stats["bb9"] - neutral["bb9"]) / 1.50
+        ) * 0.05
+        used += 0.05
+
+    if used <= 0:
+        return 1.0, "unavailable", 0.0
+
+    score /= used
+
+    # --------------------------------------------------------
+    # Sample-size reliability
+    # --------------------------------------------------------
+
+    innings = stats.get("innings")
+
+    if innings is None:
+        reliability = 0.60
+    else:
+        reliability = min(
+            1.0,
+            max(
+                0.35,
+                innings / 80.0,
+            ),
+        )
+
+    score *= reliability
+
+    # Convert quality score into a conservative multiplier.
+    #
+    # Strong pitcher:
+    # score negative -> hitter projection reduced.
+    #
+    # Weak pitcher:
+    # score positive -> hitter projection increased.
+    #
+    raw_multiplier = 1.0 + (0.085 * score)
+
+    multiplier = max(
+        0.88,
+        min(
+            1.12,
+            raw_multiplier,
+        ),
+    )
+
+    if multiplier <= 0.94:
+        label = "VERY DIFFICULT"
+    elif multiplier <= 0.975:
+        label = "DIFFICULT"
+    elif multiplier < 1.025:
+        label = "NEUTRAL"
+    elif multiplier < 1.06:
+        label = "FAVORABLE"
+    else:
+        label = "VERY FAVORABLE"
+
+    return multiplier, label, score
+
+
+def _matchup_confidence_shrink(
+    base_projection,
+    adjusted_projection,
+    line,
+    p_more,
+):
+    """
+    Reduce certainty when hitter form and today's verified
+    pitcher matchup disagree.
+
+    This NEVER flips a probability by itself. It pulls an
+    overconfident probability toward 50%.
+    """
+
+    try:
+        base_projection = float(base_projection)
+        adjusted_projection = float(adjusted_projection)
+        line = float(line)
+        p_more = float(p_more)
+    except (TypeError, ValueError):
+        return p_more
+
+    before_side = (
+        1 if base_projection > line
+        else -1 if base_projection < line
+        else 0
+    )
+
+    after_side = (
+        1 if adjusted_projection > line
+        else -1 if adjusted_projection < line
+        else 0
+    )
+
+    # If matchup actually moves the projection across the line,
+    # disagreement is substantial.
+    if (
+        before_side != 0
+        and after_side != 0
+        and before_side != after_side
+    ):
+        shrink = 0.68
+
+    else:
+        if base_projection == 0:
+            change = 0.0
+        else:
+            change = abs(
+                adjusted_projection - base_projection
+            ) / abs(base_projection)
+
+        if change >= 0.08:
+            shrink = 0.78
+        elif change >= 0.04:
+            shrink = 0.88
+        else:
+            shrink = 1.0
+
+    return 0.50 + (
+        (p_more - 0.50)
+        * shrink
+    )
+
+
 def verified_pregame_context(
     player_name,
     player_type,
@@ -1578,6 +1844,12 @@ def verified_pregame_context(
         "starter_name": None,
 
         "starter_hand": None,
+
+        "starter_stats": None,
+
+        "starter_matchup": "unavailable",
+
+        "starter_multiplier": 1.0,
 
         "player_hand": None,
 
@@ -1785,6 +2057,62 @@ def verified_pregame_context(
             "pitch_hand"
         )
 
+        # ----------------------------------------------------
+        # VERIFIED STARTER QUALITY
+        # ----------------------------------------------------
+
+        if player_type == "hitter":
+
+            starter_stats = _pitcher_season_quality(
+                opp_prob["id"],
+                season,
+            )
+
+            status[
+                "starter_stats"
+            ] = starter_stats
+
+            (
+                starter_mult,
+                starter_label,
+                starter_score,
+            ) = _starter_matchup_multiplier(
+                starter_stats
+            )
+
+            status[
+                "starter_multiplier"
+            ] = starter_mult
+
+            status[
+                "starter_matchup"
+            ] = starter_label
+
+            status[
+                "starter_quality_score"
+            ] = starter_score
+
+            status[
+                "projection_multiplier"
+            ] *= starter_mult
+
+            if starter_stats:
+
+                status["notes"].append(
+                    "Verified opposing starter quality "
+                    f"applied: {starter_label} matchup "
+                    f"(x{starter_mult:.3f})."
+                )
+
+            else:
+
+                status["notes"].append(
+                    "Opposing starter identified, but "
+                    "season pitching statistics were "
+                    "unavailable. No pitcher-quality "
+                    "adjustment applied."
+                )
+
     # --------------------------------------------------------
     # PLAYER HAND
     # --------------------------------------------------------
@@ -1964,6 +2292,24 @@ def analyze_mlb_verified(
         result["projection"],
         values,
     )
+
+    # --------------------------------------------------------
+    # Matchup disagreement calibration
+    # --------------------------------------------------------
+
+    if (
+        player_type.lower() == "hitter"
+        and pre.get("starter_stats")
+    ):
+
+        result["p_more"] = (
+            _matchup_confidence_shrink(
+                base,
+                result["projection"],
+                float(line),
+                result["p_more"],
+            )
+        )
 
     result[
         "p_less"
