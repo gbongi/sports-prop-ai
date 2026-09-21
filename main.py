@@ -1605,28 +1605,61 @@ def opponent_profile(opponent):
     }
 
 
+_LEAGUE_ALLOWED_CACHE = {}
+
+
 def league_allowed_average(prop):
+    # These league averages are identical for every prediction while
+    # the process is running, so calculate each prop once and reuse it.
+    if prop in _LEAGUE_ALLOWED_CACHE:
+        return _LEAGUE_ALLOWED_CACHE[prop]
+
+    field = {
+        "points": "points",
+        "rebounds": "rebounds",
+        "assists": "assists",
+        "3pm": "three_pm",
+    }.get(prop)
+
+    if not field:
+        return None
+
     con = sqlite3.connect(DATABASE)
     con.row_factory = sqlite3.Row
     rows = con.execute(
-        "SELECT * FROM player_games WHERE season=?",
+        """
+        SELECT game_id, opponent, points, rebounds, assists, three_pm
+        FROM player_games
+        WHERE season=?
+        """,
         (CURRENT_SEASON,),
     ).fetchall()
     con.close()
 
     grouped = {}
+
     for r in rows:
         key = (r["game_id"], r["opponent"])
+
         if key not in grouped:
-            grouped[key] = {"points":0.0,"rebounds":0.0,"assists":0.0,"three_pm":0.0}
+            grouped[key] = {
+                "points": 0.0,
+                "rebounds": 0.0,
+                "assists": 0.0,
+                "three_pm": 0.0,
+            }
+
         for f in grouped[key]:
             if r[f] is not None:
                 grouped[key][f] += float(r[f])
 
-    field = {"points":"points","rebounds":"rebounds","assists":"assists","3pm":"three_pm"}.get(prop)
-    if not field:
-        return None
-    return _mean([g[field] for g in grouped.values()])
+    value = _mean([
+        game[field]
+        for game in grouped.values()
+    ])
+
+    _LEAGUE_ALLOWED_CACHE[prop] = value
+    return value
 
 
 def opponent_adjustment(opponent, prop):
@@ -1707,13 +1740,29 @@ def expected_minutes_context(games, player_name):
         else:
             bump = 0.15
 
-        expected += bump
         injuries_used.append({
             "player": inj["player"],
             "status": inj["status"],
             "importance": importance["importance"],
             "minutes_bump": bump,
         })
+
+    # Multiple teammate absences should not be assumed to transfer
+    # all of their opportunity to the player being analyzed.
+    #
+    # Add the conservative individual estimates, but cap the total
+    # injury-driven minutes increase at +1.5 minutes.
+    total_injury_bump = sum(
+        item["minutes_bump"]
+        for item in injuries_used
+    )
+
+    total_injury_bump = min(
+        1.5,
+        total_injury_bump
+    )
+
+    expected += total_injury_bump
 
     # Avoid unrealistic minutes.
     expected = max(0.0, min(40.0, expected))
@@ -1778,236 +1827,747 @@ def display_v2_context(games, player_name, prop, opponent=None):
 
 def predict_prop_v1(games, prop, line, opponent=None, spread=None):
 
-    # IMPORTANT:
-    # V1 uses only player game history already stored in the database.
-    # Current injuries are displayed elsewhere but are NOT yet converted
-    # into a numerical adjustment.
+    # ======================================================
+    # WNBA V2 CALIBRATED PROP MODEL
+    # ======================================================
     #
-    # The model uses a recency-weighted mean, shrunk matchup information,
-    # observed volatility, and a normal approximation for P(MORE/LESS).
+    # Goals:
+    # - Do not let L5 hot/cold streaks dominate.
+    # - Require agreement across multiple time windows.
+    # - Combine distribution probability with actual hit rates.
+    # - Penalize disagreement and unstable roles.
+    # - Keep matchup/minutes/blowout adjustments conservative.
+    # - Avoid fake HIGH confidence from a single normal curve.
+    # ======================================================
+
+    import math
 
     valid = []
 
     for game in games:
 
-        value = get_stat(game, prop)
+        value = get_stat(
+            game,
+            prop
+        )
 
         if value is not None:
-            valid.append((game, float(value)))
+
+            valid.append(
+                (
+                    game,
+                    float(value),
+                )
+            )
 
     if len(valid) < 8:
         return None
 
-    values = [value for _, value in valid]
-
-    # Exponential recency weighting.
-    # Newer games receive more weight, but older games still matter.
-    decay = 0.94
-
-    weights = [
-        decay ** (len(values) - 1 - i)
-        for i in range(len(values))
+    values = [
+        value
+        for _, value in valid
     ]
 
-    weight_sum = sum(weights)
+    n = len(values)
 
-    projection = sum(
-        value * weight
-        for value, weight in zip(values, weights)
-    ) / weight_sum
+    # ------------------------------------------------------
+    # MULTI-HORIZON BASELINES
+    # ------------------------------------------------------
 
-    # Shrink opponent H2H toward the main projection.
-    # Small H2H samples are intentionally given limited influence.
+    season_values = values
+
+    l20_values = values[-20:]
+
+    l10_values = values[-10:]
+
+    l5_values = values[-5:]
+
+    season_avg = statistics.mean(
+        season_values
+    )
+
+    l20_avg = statistics.mean(
+        l20_values
+    )
+
+    l10_avg = statistics.mean(
+        l10_values
+    )
+
+    l5_avg = statistics.mean(
+        l5_values
+    )
+
+    # Larger samples deliberately receive more influence.
+    #
+    # L5 is useful for role/form detection but is NOT allowed
+    # to drive the projection by itself.
+    projection = (
+        season_avg * 0.45
+        + l20_avg * 0.30
+        + l10_avg * 0.20
+        + l5_avg * 0.05
+    )
+
+    projection_before_h2h = (
+        projection
+    )
+
+    # ------------------------------------------------------
+    # OPPONENT H2H — SMALL SECONDARY SIGNAL
+    # ------------------------------------------------------
+
+    h2h_values = []
+
     if opponent:
 
         opponent = opponent.upper()
 
         h2h_values = [
-            float(get_stat(game, prop))
+            float(
+                get_stat(
+                    game,
+                    prop
+                )
+            )
             for game, _ in valid
-            if str(game["opponent"]).upper() == opponent
-            and get_stat(game, prop) is not None
+            if (
+                str(
+                    game["opponent"]
+                ).upper()
+                == opponent
+                and get_stat(
+                    game,
+                    prop
+                )
+                is not None
+            )
         ]
 
         if h2h_values:
 
-            h2h_mean = statistics.mean(h2h_values)
+            h2h_mean = (
+                statistics.mean(
+                    h2h_values
+                )
+            )
 
-            # Maximum H2H influence is 15%.
-            # It grows gradually with sample size.
+            # Smaller maximum than V1.
+            # H2H samples are often tiny.
             h2h_weight = min(
-                0.15,
-                len(h2h_values) / 30
+                0.10,
+                len(h2h_values)
+                / 40.0,
             )
 
             projection = (
-                projection * (1 - h2h_weight)
-                + h2h_mean * h2h_weight
+                projection
+                * (
+                    1.0
+                    - h2h_weight
+                )
+                + h2h_mean
+                * h2h_weight
             )
 
     # ------------------------------------------------------
-    # EXPECTED MINUTES / AVAILABILITY ADJUSTMENT
+    # EXPECTED MINUTES / ROLE
     # ------------------------------------------------------
-    projection_before_minutes = projection
-    minutes_context = expected_minutes_context(games, games[0]["player"])
-    minutes_multiplier = 1.0
-    if minutes_context and prop != "minutes":
-        base_minutes = minutes_context["season_minutes"]
-        if base_minutes and base_minutes > 0:
-            # Only half of the raw minutes ratio is applied to counting stats.
-            raw_ratio = minutes_context["expected_minutes"] / base_minutes
-            minutes_multiplier = 1.0 + 0.50*(raw_ratio-1.0)
-            minutes_multiplier = max(0.94, min(1.06, minutes_multiplier))
-            projection *= minutes_multiplier
-    elif minutes_context and prop == "minutes":
-        projection = minutes_context["expected_minutes"]
+
+    projection_before_minutes = (
+        projection
+    )
+
+    minutes_context = (
+        expected_minutes_context(
+            games,
+            games[0]["player"],
+        )
+    )
+
+    role_minutes_multiplier = 1.0
+
+    if (
+        minutes_context
+        and prop != "minutes"
+    ):
+
+        base_minutes = (
+            minutes_context[
+                "season_minutes"
+            ]
+        )
+
+        if (
+            base_minutes
+            and base_minutes > 0
+        ):
+
+            raw_ratio = (
+                minutes_context[
+                    "expected_minutes"
+                ]
+                / base_minutes
+            )
+
+            # Conservative translation of minutes changes
+            # into counting-stat changes.
+            role_minutes_multiplier = (
+                1.0
+                + 0.50
+                * (
+                    raw_ratio
+                    - 1.0
+                )
+            )
+
+            role_minutes_multiplier = max(
+                0.94,
+                min(
+                    1.06,
+                    role_minutes_multiplier,
+                ),
+            )
+
+            projection *= (
+                role_minutes_multiplier
+            )
+
+    elif (
+        minutes_context
+        and prop == "minutes"
+    ):
+
+        projection = (
+            minutes_context[
+                "expected_minutes"
+            ]
+        )
 
     # ------------------------------------------------------
-    # OPPONENT TEAM MATCHUP ADJUSTMENT
+    # OPPONENT TEAM ENVIRONMENT
     # ------------------------------------------------------
-    projection_before_matchup = projection
+
+    projection_before_matchup = (
+        projection
+    )
+
     matchup_multiplier = 1.0
     matchup_label = "UNKNOWN"
     matchup_profile_data = None
+
     if opponent:
-        matchup_multiplier, matchup_label, matchup_profile_data = opponent_adjustment(
-            opponent, prop
+
+        (
+            matchup_multiplier,
+            matchup_label,
+            matchup_profile_data,
+        ) = opponent_adjustment(
+            opponent,
+            prop,
         )
-        projection *= matchup_multiplier
+
+        projection *= (
+            matchup_multiplier
+        )
 
     # ------------------------------------------------------
-    # PREGAME BLOWOUT-RISK ADJUSTMENT
+    # BLOWOUT RISK
     # ------------------------------------------------------
-    # spread is the PLAYER'S TEAM spread:
-    #   -12.5 = favored by 12.5
-    #   +12.5 = underdog by 12.5
-    #
-    # This is intentionally conservative. It is a V1 heuristic,
-    # not yet learned from historical spread/minutes data.
-    projection_before_blowout = projection
+
+    projection_before_blowout = (
+        projection
+    )
+
     blowout_level = "UNKNOWN"
     blowout_multiplier = 1.0
+    blowout_minutes_factor = 1.0
 
     if spread is not None:
-        abs_spread = abs(float(spread))
+
+        abs_spread = abs(
+            float(spread)
+        )
 
         if abs_spread < 6:
+
             blowout_level = "LOW"
-            minutes_multiplier = 1.00
+            blowout_minutes_factor = 1.00
+
         elif abs_spread < 10:
+
             blowout_level = "MODERATE"
-            minutes_multiplier = 0.985
+            blowout_minutes_factor = 0.985
+
         elif abs_spread < 14:
+
             blowout_level = "HIGH"
-            minutes_multiplier = 0.965
+            blowout_minutes_factor = 0.965
+
         else:
+
             blowout_level = "VERY HIGH"
-            minutes_multiplier = 0.94
+            blowout_minutes_factor = 0.94
 
         if prop == "minutes":
-            blowout_multiplier = minutes_multiplier
-        elif prop in {
-            "points", "rebounds", "assists", "3pm",
-            "pra", "ra", "pa", "pr"
-        }:
-            # Counting stats receive 80% of the minutes penalty.
-            blowout_multiplier = 1.0 - (
-                (1.0 - minutes_multiplier) * 0.80
+
+            blowout_multiplier = (
+                blowout_minutes_factor
             )
 
-        projection = projection * blowout_multiplier
+        elif prop in {
+            "points",
+            "rebounds",
+            "assists",
+            "3pm",
+            "pra",
+            "ra",
+            "pa",
+            "pr",
+        }:
 
-    # Use recent observations for volatility when enough are available.
-    volatility_sample = values[-20:]
+            blowout_multiplier = (
+                1.0
+                - (
+                    (
+                        1.0
+                        - blowout_minutes_factor
+                    )
+                    * 0.80
+                )
+            )
 
-    if len(volatility_sample) >= 2:
-        sigma = statistics.stdev(volatility_sample)
+        projection *= (
+            blowout_multiplier
+        )
+
+    # ------------------------------------------------------
+    # VOLATILITY
+    # ------------------------------------------------------
+
+    volatility_sample = (
+        values[-20:]
+    )
+
+    if (
+        len(volatility_sample)
+        >= 2
+    ):
+
+        sigma = statistics.stdev(
+            volatility_sample
+        )
+
     else:
-        sigma = 0
 
-    # Avoid pretending the distribution is ultra-certain.
-    sigma = max(sigma, 0.75)
+        sigma = 0.0
 
-    # Normal CDF without scipy.
-    import math
+    # Prop-specific minimum uncertainty.
+    #
+    # Prevents an unusually consistent short sample from
+    # producing unrealistic probabilities.
+    sigma_floors = {
+        "points": 3.0,
+        "rebounds": 2.0,
+        "assists": 1.5,
+        "3pm": 1.0,
+        "pra": 4.0,
+        "ra": 2.5,
+        "pa": 3.5,
+        "pr": 3.5,
+        "minutes": 2.0,
+    }
+
+    sigma = max(
+        sigma,
+        sigma_floors.get(
+            prop,
+            1.5,
+        ),
+    )
+
+    # ------------------------------------------------------
+    # NORMAL-DISTRIBUTION PROBABILITY
+    # ------------------------------------------------------
 
     z = (
-        line - projection
+        float(line)
+        - projection
     ) / sigma
 
-    p_less_or_equal = (
+    normal_less = (
         0.5
         * (
-            1
+            1.0
             + math.erf(
-                z / math.sqrt(2)
+                z
+                / math.sqrt(2)
             )
         )
     )
 
-    p_more = 1 - p_less_or_equal
-    p_less = p_less_or_equal
+    normal_more = (
+        1.0
+        - normal_less
+    )
 
-    # 80% predictive interval under the V1 normal approximation.
-    # z ~= 1.2816 for a central 80% interval.
+    # ------------------------------------------------------
+    # EMPIRICAL HIT RATES
+    # ------------------------------------------------------
+
+    def more_rate(sample):
+
+        if not sample:
+            return 0.50
+
+        return (
+            sum(
+                1
+                for value
+                in sample
+                if value
+                > float(line)
+            )
+            / len(sample)
+        )
+
+    season_more = more_rate(
+        season_values
+    )
+
+    l20_more = more_rate(
+        l20_values
+    )
+
+    l10_more = more_rate(
+        l10_values
+    )
+
+    l5_more = more_rate(
+        l5_values
+    )
+
+    # Again: recent games matter, but L5 cannot dominate.
+    empirical_more = (
+        season_more * 0.45
+        + l20_more * 0.30
+        + l10_more * 0.20
+        + l5_more * 0.05
+    )
+
+    # ------------------------------------------------------
+    # BLEND MODEL PROBABILITY + OBSERVED HIT RATE
+    # ------------------------------------------------------
+
+    # Empirical results receive slightly more weight because
+    # many basketball prop distributions are not perfectly
+    # normal.
+    p_more = (
+        empirical_more * 0.60
+        + normal_more * 0.40
+    )
+
+    # ------------------------------------------------------
+    # SAMPLE-SIZE RELIABILITY
+    # ------------------------------------------------------
+
+    reliability = min(
+        1.0,
+        n / 30.0,
+    )
+
+    p_more = (
+        0.50
+        + (
+            p_more
+            - 0.50
+        )
+        * reliability
+    )
+
+    # ------------------------------------------------------
+    # MULTI-WINDOW AGREEMENT
+    # ------------------------------------------------------
+
+    window_avgs = [
+        season_avg,
+        l20_avg,
+        l10_avg,
+        l5_avg,
+    ]
+
+    window_sides = []
+
+    for avg in window_avgs:
+
+        if avg > float(line):
+            window_sides.append(1)
+
+        elif avg < float(line):
+            window_sides.append(-1)
+
+        else:
+            window_sides.append(0)
+
+    more_windows = sum(
+        side == 1
+        for side in window_sides
+    )
+
+    less_windows = sum(
+        side == -1
+        for side in window_sides
+    )
+
+    agreement_count = max(
+        more_windows,
+        less_windows,
+    )
+
+    # If historical windows disagree, confidence gets pulled
+    # toward 50 rather than blindly following the projection.
+    if agreement_count <= 2:
+
+        disagreement_multiplier = 0.65
+
+    elif agreement_count == 3:
+
+        disagreement_multiplier = 0.85
+
+    else:
+
+        disagreement_multiplier = 1.0
+
+    p_more = (
+        0.50
+        + (
+            p_more
+            - 0.50
+        )
+        * disagreement_multiplier
+    )
+
+    # ------------------------------------------------------
+    # PROJECTION-vs-HIT-RATE DISAGREEMENT
+    # ------------------------------------------------------
+
+    projection_side = (
+        1
+        if projection > float(line)
+        else -1
+        if projection < float(line)
+        else 0
+    )
+
+    empirical_side = (
+        1
+        if empirical_more > 0.50
+        else -1
+        if empirical_more < 0.50
+        else 0
+    )
+
+    model_disagreement = (
+        projection_side != 0
+        and empirical_side != 0
+        and projection_side
+        != empirical_side
+    )
+
+    if model_disagreement:
+
+        p_more = (
+            0.50
+            + (
+                p_more
+                - 0.50
+            )
+            * 0.72
+        )
+
+    # ------------------------------------------------------
+    # ROLE INSTABILITY PENALTY
+    # ------------------------------------------------------
+
+    role_unstable = False
+
+    if minutes_context:
+
+        season_minutes = (
+            minutes_context[
+                "season_minutes"
+            ]
+        )
+
+        recent_minutes = (
+            minutes_context[
+                "recent_minutes"
+            ]
+        )
+
+        if (
+            season_minutes
+            and season_minutes > 0
+        ):
+
+            minutes_change = abs(
+                recent_minutes
+                - season_minutes
+            ) / season_minutes
+
+            if minutes_change >= 0.15:
+
+                role_unstable = True
+
+                p_more = (
+                    0.50
+                    + (
+                        p_more
+                        - 0.50
+                    )
+                    * 0.80
+                )
+
+    # ------------------------------------------------------
+    # FINAL PROBABILITY CAP
+    # ------------------------------------------------------
+
+    # V2 deliberately refuses extreme confidence.
+    p_more = max(
+        0.27,
+        min(
+            0.73,
+            p_more,
+        ),
+    )
+
+    p_less = (
+        1.0
+        - p_more
+    )
+
+    # ------------------------------------------------------
+    # PREDICTIVE INTERVAL
+    # ------------------------------------------------------
+
     interval_z = 1.2816
 
     interval_low = (
         projection
-        - interval_z * sigma
+        - interval_z
+        * sigma
     )
 
     interval_high = (
         projection
-        + interval_z * sigma
+        + interval_z
+        * sigma
     )
+
+    # ------------------------------------------------------
+    # CONFIDENCE
+    # ------------------------------------------------------
 
     edge = max(
         p_more,
-        p_less
+        p_less,
     )
 
     if edge < 0.58:
+
         lean = "PASS"
         confidence = "LOW"
 
-    elif edge < 0.65:
+    elif edge < 0.67:
+
         lean = (
             "MORE"
             if p_more > p_less
             else "LESS"
         )
+
         confidence = "MODERATE"
 
     else:
+
         lean = (
             "MORE"
             if p_more > p_less
             else "LESS"
         )
+
         confidence = "HIGH"
+
+    # HIGH requires stronger structural agreement.
+    #
+    # A probability alone is no longer enough.
+    if (
+        confidence == "HIGH"
+        and (
+            agreement_count < 3
+            or model_disagreement
+            or role_unstable
+        )
+    ):
+
+        confidence = "MODERATE"
 
     return {
         "projection": projection,
         "sigma": sigma,
+
         "p_more": p_more,
         "p_less": p_less,
+
         "interval_low": interval_low,
         "interval_high": interval_high,
+
         "lean": lean,
         "confidence": confidence,
-        "sample_size": len(values),
+
+        "sample_size": n,
+
+        "season_avg": season_avg,
+        "l20_avg": l20_avg,
+        "l10_avg": l10_avg,
+        "l5_avg": l5_avg,
+
+        "season_more_rate": season_more,
+        "l20_more_rate": l20_more,
+        "l10_more_rate": l10_more,
+        "l5_more_rate": l5_more,
+
+        "empirical_more_rate": empirical_more,
+
+        "window_agreement": agreement_count,
+        "model_disagreement": model_disagreement,
+        "role_unstable": role_unstable,
+
+        "projection_before_h2h": projection_before_h2h,
+
+        "h2h_games": len(
+            h2h_values
+        ),
+
         "spread": spread,
+
         "blowout_level": blowout_level,
         "blowout_multiplier": blowout_multiplier,
+
         "projection_before_blowout": projection_before_blowout,
+
         "projection_before_minutes": projection_before_minutes,
-        "minutes_multiplier": minutes_multiplier,
+
+        # Preserve old key so Flask/template remains compatible.
+        "minutes_multiplier": role_minutes_multiplier,
+
         "minutes_context": minutes_context,
+
         "projection_before_matchup": projection_before_matchup,
+
         "matchup_multiplier": matchup_multiplier,
         "matchup_label": matchup_label,
-        "matchup_profile": matchup_profile_data
+        "matchup_profile": matchup_profile_data,
     }
 
 
