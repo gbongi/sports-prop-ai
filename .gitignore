@@ -1,0 +1,50 @@
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Local databases
+*.db
+*.sqlite
+*.sqlite3
+database/*.db
+database/*.sqlite
+database/*.sqlite3
+
+# Backup files
+*.bak
+*_backup.py
+*_backup_*.py
+*_before_*.py
+app_before_*.py
+main_before_*.py
+mlb_model_before_*.py
+prizepicks_board_before_*.py
+propline_market_before_*.py
+wnba_market_bridge_before_*.py
+templates/*_before_*.html
+static/*_before_*.css
+static/*.bak
+templates/*.bak
+
+# Local/temporary repair scripts
+fix_mlb_edge_cases.py
+fix_mlb_edge_cases_v2.py
+final_mlb_edge_fix.py
+upgrade_mlb_matchup.py
+prizepicks_board_test.py
+migrate_wnba_to_postgres.py
+update_wnba_espn.py
+
+# Misc local copies
+templates/index1.html
+mlb_model_calibrated.py
