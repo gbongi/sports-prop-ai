@@ -1852,7 +1852,7 @@ function tpEdgeRatio(row){
 
     const line =
         Math.abs(
-            tpNumber(row.line, 0)
+            tpNumber(row.pp_line ?? row.line, 0)
         );
 
     const projection =
@@ -2109,8 +2109,13 @@ function topPickScore(row){
 
         const lineup =
             String(
-                row.lineup_status ||
+                row.pp_line ?? row.lineup_status ||
                 row.confirmed_lineup ||
+                (
+                    row.in_starting_lineup === true
+                        ? "CONFIRMED"
+                        : ""
+                ) ||
                 ""
             ).toUpperCase();
 
@@ -2146,7 +2151,7 @@ function topPickScore(row){
 
         if(
             lineup.includes("CONFIRMED") ||
-            row.lineup_confirmed === true
+            row.pp_line ?? row.lineup_confirmed === true
         ){
             score += 7;
             reasons.push(
@@ -2659,7 +2664,7 @@ function renderTopPicks(rows, title){
                         padding:10px;
                         text-align:center;
                     ">
-                        ${escapeTopPickHTML(row.line)}
+                        ${escapeTopPickHTML(row.pp_line ?? row.line)}
                     </td>
 
                     <td style="
