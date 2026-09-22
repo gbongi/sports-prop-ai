@@ -2,6 +2,9 @@ from flask import Flask, render_template, request, jsonify
 import sqlite3
 import json
 from datetime import date, datetime
+from zoneinfo import ZoneInfo
+
+EASTERN = ZoneInfo("America/New_York")
 from pathlib import Path
 import requests
 import re
