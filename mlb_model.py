@@ -20,6 +20,75 @@ from datetime import datetime
 
 MLB_API = "https://statsapi.mlb.com/api"
 
+# ============================================================
+# MLB DATA CACHE
+# ============================================================
+# Cache RAW MLB API data only.
+# Prediction/probability calculations are never cached here.
+#
+# This lets multiple PrizePicks props for the same player reuse
+# the same player lookup and season game log.
+
+import time
+import threading
+from copy import deepcopy
+
+MLB_HISTORY_CACHE_TTL = 300  # 5 minutes
+
+_MLB_PLAYER_CACHE = {}
+_MLB_GAMELOG_CACHE = {}
+_MLB_HISTORY_CACHE_LOCK = threading.RLock()
+
+_MLB_CACHE_STATS = {
+    "player_hits": 0,
+    "player_misses": 0,
+    "gamelog_hits": 0,
+    "gamelog_misses": 0,
+}
+
+
+def clear_mlb_history_cache():
+    with _MLB_HISTORY_CACHE_LOCK:
+        _MLB_PLAYER_CACHE.clear()
+        _MLB_GAMELOG_CACHE.clear()
+
+        for key in _MLB_CACHE_STATS:
+            _MLB_CACHE_STATS[key] = 0
+
+
+def get_mlb_history_cache_stats():
+    with _MLB_HISTORY_CACHE_LOCK:
+        return dict(_MLB_CACHE_STATS)
+
+
+def _history_cache_get(cache, key):
+    now = time.monotonic()
+
+    with _MLB_HISTORY_CACHE_LOCK:
+        item = cache.get(key)
+
+        if item is None:
+            return None
+
+        created, value = item
+
+        if now - created > MLB_HISTORY_CACHE_TTL:
+            cache.pop(key, None)
+            return None
+
+        return deepcopy(value)
+
+
+def _history_cache_set(cache, key, value):
+    with _MLB_HISTORY_CACHE_LOCK:
+        cache[key] = (
+            time.monotonic(),
+            deepcopy(value),
+        )
+
+    return deepcopy(value)
+
+
 
 HITTER_PROPS = [
     "hits",
@@ -88,6 +157,21 @@ def _json(url, timeout=12):
 
 
 def find_player(name):
+    cache_key = str(name or "").strip().lower()
+
+    cached = _history_cache_get(
+        _MLB_PLAYER_CACHE,
+        cache_key,
+    )
+
+    if cached is not None:
+        with _MLB_HISTORY_CACHE_LOCK:
+            _MLB_CACHE_STATS["player_hits"] += 1
+        return cached
+
+    with _MLB_HISTORY_CACHE_LOCK:
+        _MLB_CACHE_STATS["player_misses"] += 1
+
     q = urllib.parse.quote(name)
 
     data = _json(
@@ -101,14 +185,21 @@ def find_player(name):
         return None
 
     exact = [
-        p for p in people
-        if p.get("fullName", "").lower() == name.lower()
+        person
+        for person in people
+        if person.get("fullName", "").lower()
+        == str(name).lower()
     ]
 
-    return (exact or people)[0]
+    result = (exact or people)[0]
 
+    return _history_cache_set(
+        _MLB_PLAYER_CACHE,
+        cache_key,
+        result,
+    )
 
-def player_game_log(player_id, season, group):
+def _player_game_log_uncached(player_id, season, group):
     hydrate = urllib.parse.quote("team")
 
     url = (
@@ -156,6 +247,40 @@ def player_game_log(player_id, season, group):
 # ============================================================
 # BASIC HELPERS
 # ============================================================
+
+
+def player_game_log(player_id, season, group):
+    cache_key = (
+        int(player_id),
+        int(season),
+        str(group).lower(),
+    )
+
+    cached = _history_cache_get(
+        _MLB_GAMELOG_CACHE,
+        cache_key,
+    )
+
+    if cached is not None:
+        with _MLB_HISTORY_CACHE_LOCK:
+            _MLB_CACHE_STATS["gamelog_hits"] += 1
+        return cached
+
+    with _MLB_HISTORY_CACHE_LOCK:
+        _MLB_CACHE_STATS["gamelog_misses"] += 1
+
+    games = _player_game_log_uncached(
+        player_id,
+        season,
+        group,
+    )
+
+    return _history_cache_set(
+        _MLB_GAMELOG_CACHE,
+        cache_key,
+        games,
+    )
+
 
 def _num(v, default=0.0):
     try:
@@ -207,17 +332,19 @@ def hitter_value(game, prop):
 
         "home_runs": hr,
 
-        # PrizePicks-style common scoring approximation.
+        # PrizePicks MLB Hitter Fantasy Score:
+        # 1B=3, 2B=5, 3B=8, HR=10,
+        # R=2, RBI=2, BB=2, HBP=2, SB=5.
         "hitter_fantasy_score": (
             3 * singles
-            + 6 * doubles
-            + 9 * triples
-            + 12 * hr
-            + 3 * _num(s.get("baseOnBalls"))
-            + 3 * _num(s.get("hitByPitch"))
-            + 3 * _num(s.get("stolenBases"))
-            + 3 * _num(s.get("runs"))
-            + 3 * _num(s.get("rbi"))
+            + 5 * doubles
+            + 8 * triples
+            + 10 * hr
+            + 2 * _num(s.get("baseOnBalls"))
+            + 2 * _num(s.get("hitByPitch"))
+            + 5 * _num(s.get("stolenBases"))
+            + 2 * _num(s.get("runs"))
+            + 2 * _num(s.get("rbi"))
         ),
     }
 
@@ -2058,7 +2185,226 @@ def _matchup_confidence_shrink(
     )
 
 
-def verified_pregame_context(
+
+# ============================================================
+# VERIFIED HITTER vs PITCHER-HAND SPLITS
+# ============================================================
+
+_MLB_HAND_SPLIT_CACHE = {}
+
+
+def _hitter_hand_split(person_id, season, pitcher_hand):
+    """
+    Fetch verified MLB batter performance vs the opposing
+    pitcher's throwing hand using StatsAPI statSplits.
+
+    Returns None when verified data is unavailable.
+
+    Split effect is deliberately conservative:
+    - current-season data only
+    - OPS used as broad offensive-quality signal
+    - sample-size shrinkage
+    - final multiplier capped to 0.94 - 1.06
+    """
+
+    hand = str(pitcher_hand or "").upper()
+
+    if hand == "L":
+        sit_code = "vl"
+    elif hand == "R":
+        sit_code = "vr"
+    else:
+        return None
+
+    key = (
+        int(person_id),
+        int(season),
+        sit_code,
+    )
+
+    if key in _MLB_HAND_SPLIT_CACHE:
+        return deepcopy(
+            _MLB_HAND_SPLIT_CACHE[key]
+        )
+
+    def number(value):
+        if value in (
+            None,
+            "",
+            "-",
+            ".---",
+        ):
+            return None
+
+        try:
+            return float(value)
+        except (
+            TypeError,
+            ValueError,
+        ):
+            return None
+
+    try:
+        split_url = (
+            f"{MLB_API}/v1/people/{int(person_id)}/stats"
+            f"?stats=statSplits"
+            f"&group=hitting"
+            f"&season={int(season)}"
+            f"&sitCodes={sit_code}"
+        )
+
+        split_data = _json(split_url)
+
+        split_rows = []
+
+        for block in split_data.get("stats", []):
+            split_rows.extend(
+                block.get("splits", [])
+            )
+
+        if not split_rows:
+            return None
+
+        split_stat = (
+            split_rows[0].get("stat", {})
+            or {}
+        )
+
+        split_pa = number(
+            split_stat.get("plateAppearances")
+        )
+
+        split_ops = number(
+            split_stat.get("ops")
+        )
+
+        if (
+            split_pa is None
+            or split_ops is None
+            or split_pa <= 0
+        ):
+            return None
+
+        overall_url = (
+            f"{MLB_API}/v1/people/{int(person_id)}/stats"
+            f"?stats=season"
+            f"&group=hitting"
+            f"&season={int(season)}"
+        )
+
+        overall_data = _json(overall_url)
+
+        overall_rows = []
+
+        for block in overall_data.get("stats", []):
+            overall_rows.extend(
+                block.get("splits", [])
+            )
+
+        if not overall_rows:
+            return None
+
+        overall_stat = (
+            overall_rows[0].get("stat", {})
+            or {}
+        )
+
+        overall_ops = number(
+            overall_stat.get("ops")
+        )
+
+        overall_pa = number(
+            overall_stat.get("plateAppearances")
+        )
+
+        if (
+            overall_ops is None
+            or overall_ops <= 0
+        ):
+            return None
+
+        raw_ratio = (
+            split_ops / overall_ops
+        )
+
+        # ----------------------------------------------------
+        # SAMPLE RELIABILITY
+        #
+        # ~50 PA  = modest influence
+        # ~150 PA = useful influence
+        # ~300 PA = near-full current-season reliability
+        # ----------------------------------------------------
+
+        reliability = min(
+            1.0,
+            max(
+                0.15,
+                split_pa / 300.0,
+            ),
+        )
+
+        # Shrink the split difference toward neutral.
+        adjusted_ratio = (
+            1.0
+            + (
+                raw_ratio - 1.0
+            )
+            * reliability
+        )
+
+        # OPS does not translate 1:1 into fantasy scoring.
+        # Apply only half of the remaining relative difference.
+        multiplier = (
+            1.0
+            + (
+                adjusted_ratio - 1.0
+            )
+            * 0.50
+        )
+
+        multiplier = max(
+            0.94,
+            min(
+                1.06,
+                multiplier,
+            ),
+        )
+
+        if multiplier <= 0.965:
+            label = "UNFAVORABLE"
+        elif multiplier < 0.99:
+            label = "SLIGHTLY UNFAVORABLE"
+        elif multiplier <= 1.01:
+            label = "NEUTRAL"
+        elif multiplier < 1.035:
+            label = "SLIGHTLY FAVORABLE"
+        else:
+            label = "FAVORABLE"
+
+        result = {
+            "pitcher_hand": hand,
+            "sit_code": sit_code,
+            "plate_appearances": split_pa,
+            "overall_plate_appearances": overall_pa,
+            "ops": split_ops,
+            "overall_ops": overall_ops,
+            "raw_ratio": raw_ratio,
+            "reliability": reliability,
+            "multiplier": multiplier,
+            "label": label,
+            "source": "MLB STAT SPLITS",
+        }
+
+        _MLB_HAND_SPLIT_CACHE[key] = deepcopy(
+            result
+        )
+
+        return deepcopy(result)
+
+    except Exception:
+        return None
+
+def _verified_pregame_context_uncached(
     player_name,
     player_type,
     team_id,
@@ -2113,6 +2459,10 @@ def verified_pregame_context(
         "player_hand": None,
 
         "handedness_split": "unavailable",
+
+        "handedness_stats": None,
+
+        "handedness_multiplier": 1.0,
 
         "expected_opportunity": "unavailable",
 
@@ -2411,21 +2761,84 @@ def verified_pregame_context(
     # --------------------------------------------------------
 
     if (
+        player_type == "hitter"
+        and p
+        and status["player_hand"]
+        and status["starter_hand"]
+    ):
+
+        hand_stats = _hitter_hand_split(
+            p["id"],
+            season,
+            status["starter_hand"],
+        )
+
+        if hand_stats:
+
+            hand_mult = float(
+                hand_stats.get(
+                    "multiplier",
+                    1.0,
+                )
+            )
+
+            status[
+                "handedness_stats"
+            ] = hand_stats
+
+            status[
+                "handedness_multiplier"
+            ] = hand_mult
+
+            status[
+                "handedness_split"
+            ] = hand_stats.get(
+                "label",
+                "available",
+            )
+
+            status[
+                "projection_multiplier"
+            ] *= hand_mult
+
+            status["notes"].append(
+                "Verified batter split vs "
+                f'{status["starter_hand"]}HP applied: '
+                f'{hand_stats.get("label")} '
+                f'(x{hand_mult:.3f}); '
+                f'{int(hand_stats.get("plate_appearances") or 0)} PA, '
+                f'OPS {hand_stats.get("ops"):.3f} '
+                f'vs overall {hand_stats.get("overall_ops"):.3f}.'
+            )
+
+        else:
+
+            status[
+                "handedness_split"
+            ] = (
+                "verified hands; "
+                "split data unavailable"
+            )
+
+            status["notes"].append(
+                "Player/starter hands verified, "
+                "but verified MLB handedness split "
+                "statistics were unavailable. "
+                "No split adjustment applied."
+            )
+
+    elif (
         status["player_hand"]
         and status["starter_hand"]
     ):
 
         status[
             "handedness_split"
-        ] = (
-            "hands verified; "
-            "split adjustment unavailable"
-        )
+        ] = "hands verified"
 
         status["notes"].append(
             "Player/starter hands verified. "
-            "No unverified handedness split "
-            "multiplier applied."
+            "No hitter split adjustment required."
         )
 
     # --------------------------------------------------------
@@ -2497,6 +2910,78 @@ def verified_pregame_context(
         )
 
     return status
+
+
+# ============================================================
+# VERIFIED PREGAME CACHE
+# ============================================================
+# Pregame context is identical across props/lines for the same
+# player and matchup. Cache only the context -- never model
+# projections or probabilities.
+
+_MLB_PREGAME_CACHE = {}
+_MLB_PREGAME_CACHE_STATS = {
+    "hits": 0,
+    "misses": 0,
+}
+
+
+def clear_mlb_pregame_cache():
+    with _MLB_HISTORY_CACHE_LOCK:
+        _MLB_PREGAME_CACHE.clear()
+        _MLB_PREGAME_CACHE_STATS["hits"] = 0
+        _MLB_PREGAME_CACHE_STATS["misses"] = 0
+
+
+def get_mlb_pregame_cache_stats():
+    with _MLB_HISTORY_CACHE_LOCK:
+        return dict(_MLB_PREGAME_CACHE_STATS)
+
+
+def verified_pregame_context(
+    player_name,
+    player_type,
+    team_id,
+    opponent_id,
+    season=None,
+):
+    if season is None:
+        season = datetime.now().year
+
+    key = (
+        str(player_name or "").strip().lower(),
+        str(player_type or "").strip().lower(),
+        int(team_id),
+        int(opponent_id),
+        int(season),
+    )
+
+    cached = _history_cache_get(
+        _MLB_PREGAME_CACHE,
+        key,
+    )
+
+    if cached is not None:
+        with _MLB_HISTORY_CACHE_LOCK:
+            _MLB_PREGAME_CACHE_STATS["hits"] += 1
+        return cached
+
+    with _MLB_HISTORY_CACHE_LOCK:
+        _MLB_PREGAME_CACHE_STATS["misses"] += 1
+
+    result = _verified_pregame_context_uncached(
+        player_name,
+        player_type,
+        team_id,
+        opponent_id,
+        season,
+    )
+
+    return _history_cache_set(
+        _MLB_PREGAME_CACHE,
+        key,
+        result,
+    )
 
 
 # ============================================================
