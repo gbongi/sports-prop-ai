@@ -664,7 +664,7 @@ remember();
 
 
 <!-- ====================================================== -->
-<!-- MLB PROP SCANNER                                       -->
+<!-- AUTOMATIC PRIZEPICKS MLB PROP SCANNER                   -->
 <!-- ====================================================== -->
 
 <section id="mlb-scanner-section" style="
@@ -675,13 +675,13 @@ remember();
     border-radius:16px;
 ">
 
-    <h2>⚾ MLB Prop Scanner</h2>
+    <h2>Automatic PrizePicks Scanner</h2>
 
     <p>
-        Scan today's MLB hitters using the full prediction model.
-        Preliminary and monitoring candidates are shown, but a
-        Final Pick requires the game to be near start time and the
-        player to be confirmed in the starting lineup.
+        Scans current standard PrizePicks MLB and WNBA lines automatically.
+        The prediction model independently chooses MORE, LESS, or PASS.
+        Preliminary candidates are not Final Picks until the game is
+        close enough to start and required pregame checks are confirmed.
     </p>
 
     <div style="
@@ -693,53 +693,151 @@ remember();
     ">
 
         <div>
-            <label for="scannerDate">Date</label><br>
-            <input type="date" id="scannerDate">
+            <label for="scannerSport">Sport</label><br>
+            <select id="scannerSport" onchange="updateScannerSport()">
+                <option value="MLB">MLB</option>
+                <option value="WNBA">WNBA</option>
+            </select>
+        </div>
+
+        <div id="scannerPlayerTypeBox">
+            <label for="scannerPlayerType">Player Type</label><br>
+            <select id="scannerPlayerType" onchange="updateScannerProps()">
+                <option value="ALL">All Players</option>
+                <option value="HITTER">Hitters</option>
+                <option value="PITCHER">Pitchers</option>
+            </select>
         </div>
 
         <div>
             <label for="scannerProp">Prop</label><br>
             <select id="scannerProp">
-                <option value="hitter_fantasy_score">
-                    Hitter Fantasy Score
-                </option>
             </select>
         </div>
 
         <div>
-            <label for="scannerLine">PrizePicks Line</label><br>
-            <input
-                type="number"
-                id="scannerLine"
-                value="4.5"
-                step="0.5"
-                style="width:100px;"
-            >
+            <label for="scannerDecision">Decision</label><br>
+            <select id="scannerDecision">
+                <option value="ALL">MORE + LESS</option>
+                <option value="MORE">MORE</option>
+                <option value="LESS">LESS</option>
+                <option value="PASS">PASS</option>
+            </select>
         </div>
 
         <div>
-            <label for="scannerDirection">Direction</label><br>
-            <select id="scannerDirection">
-                <option value="MORE">MORE</option>
-                <option value="LESS">LESS</option>
+            <label for="scannerConfidence">Confidence</label><br>
+            <select id="scannerConfidence">
+                <option value="ALL">Moderate + High</option>
+                <option value="HIGH">High Only</option>
+                <option value="MODERATE">Moderate Only</option>
             </select>
         </div>
 
         <button
             type="button"
             id="runMLBScanner"
-            onclick="runMLBScanner()"
+            onclick="runSharedScanner()"
             style="
                 padding:10px 18px;
                 cursor:pointer;
                 font-weight:bold;
             "
         >
-            Scan MLB
+            Scan PrizePicks
         </button>
+
+        <button
+            type="button"
+            id="sportTopPicksButton"
+            onclick="showSportTopPicks()"
+            style="
+                padding:10px 18px;
+                cursor:pointer;
+                font-weight:bold;
+                border:1px solid #5f5135;
+                border-radius:8px;
+                background:#17150f;
+                color:#d2bd7d;
+            "
+        >
+            ⭐ Sport Top Picks
+        </button>
+
+        <button
+            type="button"
+            id="overallTopPicksButton"
+            onclick="showOverallTopPicks()"
+            style="
+                padding:10px 18px;
+                cursor:pointer;
+                font-weight:bold;
+                border:1px solid #5f5135;
+                border-radius:8px;
+                background:#17150f;
+                color:#d2bd7d;
+            "
+        >
+            🏆 Overall Top Picks
+        </button>
+
+        <button
+            type="button"
+            id="fullBoardButton"
+            onclick="showFullScannerBoard()"
+            style="
+                padding:10px 18px;
+                cursor:pointer;
+                font-weight:bold;
+                border:1px solid #444;
+                border-radius:8px;
+                background:#171717;
+                color:#ddd;
+            "
+        >
+            📋 Full Board
+        </button>
+
+        <button
+            type="button"
+            id="saveMLBScannerResults"
+            onclick="saveMLBScannerResults()"
+            disabled
+            style="
+                padding:10px 18px;
+                cursor:pointer;
+                font-weight:bold;
+            "
+        >
+            💾 Save Loaded Results
+        </button>
+
+        <a
+            href="/results"
+            style="
+                padding:10px 18px;
+                display:inline-block;
+            "
+        >
+            📊 Saved Results
+        </a>
 
     </div>
 
+    
+    <div
+        id="scannerSnapshotStatus"
+        style="
+            display:none;
+            margin:0 0 16px 0;
+            padding:12px 14px;
+            border:1px solid #4b4028;
+            border-radius:10px;
+            background:#11100d;
+        "
+    ></div>
+
+<div id="scannerSaveStatus"></div>
     <div id="scannerStatus"></div>
     <div id="scannerSummary"></div>
     <div id="scannerResults"></div>
@@ -749,21 +847,107 @@ remember();
 
 <script>
 
-(function setScannerDate(){
-    const input = document.getElementById("scannerDate");
+const scannerHitterProps = [
+    ["ALL", "All Supported Hitter Props"],
+    ["Hits", "Hits"],
+    ["Total Bases", "Total Bases"],
+    ["Runs", "Runs"],
+    ["RBIs", "RBIs"],
+    ["Walks", "Walks"],
+    ["Hitter Fantasy Score", "Hitter Fantasy Score"]
+];
 
-    if(!input.value){
-        const now = new Date();
-        const local = new Date(
-            now.getTime() - now.getTimezoneOffset() * 60000
-        );
+const scannerPitcherProps = [
+    ["ALL", "All Supported Pitcher Props"],
+    ["Pitcher Strikeouts", "Pitcher Strikeouts"],
+    ["Hits Allowed", "Hits Allowed"],
+    ["Walks Allowed", "Walks Allowed"],
+    ["Earned Runs Allowed", "Earned Runs Allowed"],
+    ["Pitching Outs", "Pitching Outs"],
+    ["Pitcher Fantasy Score", "Pitcher Fantasy Score"]
+];
 
-        input.value = local.toISOString().slice(0,10);
+
+
+const scannerAllProps = [
+    ["ALL", "All Supported Props"],
+    ...scannerHitterProps.slice(1),
+    ...scannerPitcherProps.slice(1)
+];
+
+
+
+
+
+
+
+const scannerWNBAProps = [
+    ["ALL", "All Supported WNBA Props"],
+    ["Points", "Points"],
+    ["Rebounds", "Rebounds"],
+    ["Assists", "Assists"],
+    ["3-PT Made", "3-PT Made"],
+    ["Pts+Rebs+Asts", "Pts+Rebs+Asts"],
+    ["Pts+Rebs", "Pts+Rebs"],
+    ["Pts+Asts", "Pts+Asts"],
+    ["Rebs+Asts", "Rebs+Asts"]
+];
+
+
+
+
+function updateScannerProps(){
+    const scannerSport=document.getElementById("scannerSport")?.value || "MLB";
+    const type=document.getElementById("scannerPlayerType").value;
+    const prop=document.getElementById("scannerProp");
+    let options=scannerSport === "WNBA" ? scannerWNBAProps : scannerAllProps;
+    if(scannerSport === "MLB" && type === "HITTER") options=scannerHitterProps;
+    if(scannerSport === "MLB" && type === "PITCHER") options=scannerPitcherProps;
+    prop.innerHTML="";
+    for(const [value,label] of options) prop.add(new Option(label,value));
+}
+
+
+function updateScannerSport(){
+
+    const sport =
+        document.getElementById("scannerSport")?.value || "MLB";
+
+    const playerTypeBox =
+        document.getElementById("scannerPlayerTypeBox");
+
+    const playerType =
+        document.getElementById("scannerPlayerType");
+
+    // Player Type only applies to MLB.
+    if(playerTypeBox){
+        if(sport === "WNBA"){
+            playerTypeBox.style.display = "none";
+        }else{
+            playerTypeBox.style.display = "";
+        }
     }
-})();
+
+    // Prevent an old MLB hitter/pitcher selection from
+    // affecting WNBA results.
+    if(playerType){
+        if(sport === "WNBA"){
+            playerType.value = "ALL";
+            playerType.disabled = true;
+        }else{
+            playerType.disabled = false;
+        }
+    }
+
+    // Swap the prop list for the selected sport.
+    if(typeof updateScannerProps === "function"){
+        updateScannerProps();
+    }
+}
 
 
 function scannerPercent(value){
+
     if(value === null || value === undefined){
         return "N/A";
     }
@@ -773,6 +957,7 @@ function scannerPercent(value){
 
 
 function scannerProjection(value){
+
     if(value === null || value === undefined){
         return "N/A";
     }
@@ -782,6 +967,7 @@ function scannerProjection(value){
 
 
 function scannerStageBadge(stage){
+
     if(stage === "FINAL CHECK"){
         return "🟢 FINAL CHECK";
     }
@@ -794,32 +980,91 @@ function scannerStageBadge(stage){
         return "🔵 PRELIMINARY";
     }
 
+    if(stage === "LOCKED"){
+        return "🔒 LOCKED";
+    }
+
     return stage || "UNKNOWN";
+}
+
+
+function scannerMatchesPlayerType(row, type){
+
+    if(type === "ALL"){
+        return true;
+    }
+
+    if(type === "HITTER"){
+        return row.player_type === "hitter";
+    }
+
+    if(type === "PITCHER"){
+        return row.player_type === "pitcher";
+    }
+
+    return true;
+}
+
+
+function scannerMatchesDecision(row, decision){
+
+    if(decision === "ALL"){
+        return row.lean === "MORE" || row.lean === "LESS";
+    }
+
+    return row.lean === decision;
+}
+
+
+function scannerMatchesConfidence(row, confidence){
+
+    if(confidence === "ALL"){
+        return (
+            row.confidence === "MODERATE" ||
+            row.confidence === "HIGH"
+        );
+    }
+
+    return row.confidence === confidence;
 }
 
 
 async function runMLBScanner(){
 
-    const button = document.getElementById("runMLBScanner");
-    const status = document.getElementById("scannerStatus");
-    const summary = document.getElementById("scannerSummary");
-    const results = document.getElementById("scannerResults");
+    const button =
+        document.getElementById("runMLBScanner");
 
-    const gameDate =
-        document.getElementById("scannerDate").value;
+    const status =
+        document.getElementById("scannerStatus");
 
-    const line =
-        document.getElementById("scannerLine").value;
+    const summary =
+        document.getElementById("scannerSummary");
 
-    const direction =
-        document.getElementById("scannerDirection").value;
+    const results =
+        document.getElementById("scannerResults");
+
+    const scannerSport = document.getElementById("scannerSport")?.value || "MLB";
+    const playerType =
+        document.getElementById("scannerPlayerType").value;
+
+    const prop =
+        document.getElementById("scannerProp").value;
+
+    const decision =
+        document.getElementById("scannerDecision").value;
+
+    const confidence =
+        document.getElementById("scannerConfidence").value;
 
     button.disabled = true;
     button.textContent = "Scanning...";
 
-    status.innerHTML =
-        "<p><strong>Scanning today's MLB games...</strong> " +
-        "This can take around 20–40 seconds.</p>";
+    status.innerHTML = `
+        <p>
+            <strong>Reading current PrizePicks lines and running the ${scannerSport} model...</strong>
+            This may take a little while for All Supported Props.
+        </p>
+    `;
 
     summary.innerHTML = "";
     results.innerHTML = "";
@@ -827,24 +1072,114 @@ async function runMLBScanner(){
     try{
 
         const params = new URLSearchParams({
-            date: gameDate,
-            line: line,
-            direction: direction
+            prop: prop
         });
 
         const response = await fetch(
-            "/api/mlb/scanner?" + params.toString()
+            `/api/${scannerSport.toLowerCase()}/prizepicks-scanner?` +
+            params.toString()
         );
 
         const data = await response.json();
 
+        if(
+            typeof registerScannerSnapshot === "function" &&
+            data &&
+            Array.isArray(data.results)
+        ){
+            registerScannerSnapshot(
+                scannerSport,
+                data,
+                false
+            );
+        }
+
+
+        // Keep the exact scan currently displayed.
+        window.currentMLBScannerData = data;
+        window.currentScannerData = data;
+        window.scannerSportCache = window.scannerSportCache || {};
+        if(data && data.sport){
+            window.scannerSportCache[String(data.sport).toUpperCase()] = data;
+        }
+
+        window.currentScannerData = data;
+        window.scannerSportCache = window.scannerSportCache || {};
+        if(data && data.sport){
+            window.scannerSportCache[String(data.sport).toUpperCase()] = data;
+        }
+
+
+        const saveButton =
+            document.getElementById(
+                "saveMLBScannerResults"
+            );
+
+        if(
+            saveButton &&
+            Array.isArray(data.results)
+        ){
+            saveButton.disabled =
+                data.results.length === 0;
+        }
+
+
         if(!response.ok || data.error){
             throw new Error(
-                data.error || "Scanner request failed."
+                data.error ||
+                "PrizePicks scanner request failed."
             );
         }
 
         status.innerHTML = "";
+
+        let candidates = data.results.filter(row => {
+
+            const matchesPlayer =
+                scannerMatchesPlayerType(
+                    row,
+                    playerType
+                );
+
+            if(!matchesPlayer){
+                return false;
+            }
+
+            // PASS is only visible when explicitly selected.
+            if(decision === "PASS"){
+                return row.lean === "PASS";
+            }
+
+            // Normal scanner view:
+            // show actionable MORE/LESS candidates only.
+            if(!row.qualifies){
+                return false;
+            }
+
+            if(
+                !scannerMatchesDecision(
+                    row,
+                    decision
+                )
+            ){
+                return false;
+            }
+
+            return scannerMatchesConfidence(
+                row,
+                confidence
+            );
+        });
+
+        candidates.sort(
+            (a, b) =>
+                Number(b.strongest_probability || 0) -
+                Number(a.strongest_probability || 0)
+        );
+
+        const finalPicks = candidates.filter(
+            row => row.final_pick
+        ).length;
 
         summary.innerHTML = `
             <div style="
@@ -853,21 +1188,17 @@ async function runMLBScanner(){
                 border:1px solid #444;
                 border-radius:10px;
             ">
-                <strong>${data.direction} ${data.line}</strong>
+                <strong>Live Standard PrizePicks Board</strong>
                 &nbsp; | &nbsp;
-                Games: ${data.games_found}
+                PP Props Found: ${data.board_props_found}
                 &nbsp; | &nbsp;
-                Players analyzed: ${data.players_analyzed}
+                Analyzed: ${data.players_analyzed}
                 &nbsp; | &nbsp;
-                Qualifying: ${data.qualifying_count}
+                Showing: ${candidates.length}
                 &nbsp; | &nbsp;
-                Final Picks: ${data.final_pick_count}
+                Verified: ${finalPicks}
             </div>
         `;
-
-        const candidates = data.results.filter(
-            r => r.qualifies || r.final_pick
-        );
 
         if(candidates.length === 0){
 
@@ -879,8 +1210,8 @@ async function runMLBScanner(){
                 ">
                     <strong>No strong plays found.</strong>
                     <br><br>
-                    The model did not find a ${data.direction}
-                    edge strong enough at ${data.line}.
+                    No current PrizePicks props passed the
+                    selected model filters.
                 </div>
             `;
 
@@ -900,11 +1231,23 @@ async function runMLBScanner(){
                         </th>
 
                         <th style="padding:10px;text-align:left;">
-                            Matchup
+                            Prop
+                        </th>
+
+                        <th style="padding:10px;">
+                            PP Line
                         </th>
 
                         <th style="padding:10px;">
                             Projection
+                        </th>
+
+                        <th style="padding:10px;">
+                            Edge
+                        </th>
+
+                        <th style="padding:10px;">
+                            Pick
                         </th>
 
                         <th style="padding:10px;">
@@ -916,11 +1259,11 @@ async function runMLBScanner(){
                         </th>
 
                         <th style="padding:10px;">
-                            Game Stage
+                            Market
                         </th>
 
                         <th style="padding:10px;">
-                            Lineup
+                            Game Stage
                         </th>
 
                         <th style="padding:10px;">
@@ -934,31 +1277,58 @@ async function runMLBScanner(){
 
         for(const r of candidates){
 
-            const probability =
-                data.direction === "MORE"
-                ? r.p_more
-                : r.p_less;
+            // If the market guard forced PASS, preserve
+            // the probability from the model's raw direction.
+            let probability = null;
 
-            let lineup = "Waiting";
-
-            if(r.in_starting_lineup === true){
-                lineup =
-                    r.batting_order
-                    ? "Confirmed #" + r.batting_order
-                    : "Confirmed";
+            if(r.lean === "MORE"){
+                probability = r.p_more;
+            }
+            else if(r.lean === "LESS"){
+                probability = r.p_less;
+            }
+            else if(r.raw_lean === "MORE"){
+                probability = r.p_more;
+            }
+            else if(r.raw_lean === "LESS"){
+                probability = r.p_less;
             }
 
-            if(r.in_starting_lineup === false){
-                lineup = "Not Starting";
+            let displayPick = r.lean;
+
+            if(
+                r.lean === "PASS" &&
+                (r.raw_lean === "MORE" ||
+                 r.raw_lean === "LESS")
+            ){
+                displayPick =
+                    `PASS (Raw: ${r.raw_lean})`;
             }
 
-            let pickStatus = "WATCH";
+            let marketDisplay = "✅ NORMAL";
 
-            if(r.final_pick){
-                pickStatus = "🔥 FINAL PICK";
+            if(r.market_status === "REVIEW"){
+                marketDisplay = "⚠️ REVIEW";
             }
-            else if(r.qualifies){
-                pickStatus = "👀 CANDIDATE";
+            else if(r.market_status === "EXTREME"){
+                marketDisplay = "🛑 EXTREME";
+            }
+
+            let pickStatus = "🟡 STRONG — PREGAME PENDING";
+            if((r.readiness || "") === "VERIFIED") pickStatus = "🟢 VERIFIED";
+            else if(r.lean === "PASS" || (r.readiness || "") === "PASS") pickStatus = "🔴 PASS";
+
+            let edgeDisplay = "—";
+
+            if(
+                r.model_edge !== null &&
+                r.model_edge !== undefined &&
+                !Number.isNaN(Number(r.model_edge))
+            ){
+                const edge = Number(r.model_edge);
+
+                edgeDisplay =
+                    `${edge > 0 ? "+" : ""}${edge.toFixed(2)}`;
             }
 
             html += `
@@ -967,11 +1337,20 @@ async function runMLBScanner(){
                     <td style="padding:10px;">
                         <strong>${r.player}</strong>
                         <br>
-                        <small>${r.team}</small>
+                        <small>
+                            ${r.team} vs ${r.opponent}
+                        </small>
                     </td>
 
                     <td style="padding:10px;">
-                        vs ${r.opponent}
+                        ${r.pp_prop}
+                    </td>
+
+                    <td style="
+                        padding:10px;
+                        text-align:center;
+                    ">
+                        <strong>${r.pp_line}</strong>
                     </td>
 
                     <td style="
@@ -979,6 +1358,20 @@ async function runMLBScanner(){
                         text-align:center;
                     ">
                         ${scannerProjection(r.projection)}
+                    </td>
+
+                    <td style="
+                        padding:10px;
+                        text-align:center;
+                    ">
+                        <strong>${edgeDisplay}</strong>
+                    </td>
+
+                    <td style="
+                        padding:10px;
+                        text-align:center;
+                    ">
+                        <strong>${displayPick}</strong>
                     </td>
 
                     <td style="
@@ -1001,14 +1394,25 @@ async function runMLBScanner(){
                         padding:10px;
                         text-align:center;
                     ">
-                        ${scannerStageBadge(r.scan_stage)}
+                        <strong>${marketDisplay}</strong>
+
+                        ${
+                            r.market_warning
+                            ? `
+                                <br>
+                                <small>
+                                    ${r.market_warning}
+                                </small>
+                              `
+                            : ""
+                        }
                     </td>
 
                     <td style="
                         padding:10px;
                         text-align:center;
                     ">
-                        ${lineup}
+                        ${scannerStageBadge(r.scan_stage)}
                     </td>
 
                     <td style="
@@ -1048,13 +1452,1820 @@ async function runMLBScanner(){
     finally{
 
         button.disabled = false;
-        button.textContent = "Scan MLB";
+        button.textContent = "Scan PrizePicks";
 
     }
 }
 
+
+updateScannerSport();
+
 </script>
 
+<script>
+
+async function saveMLBScannerResults(){
+
+    const status =
+        document.getElementById(
+            "scannerSaveStatus"
+        );
+
+    const button =
+        document.getElementById(
+            "saveMLBScannerResults"
+        );
+
+    const scan =
+        window.currentScannerData || window.currentMLBScannerData;
+
+    if(
+        !scan ||
+        !Array.isArray(scan.results) ||
+        scan.results.length === 0
+    ){
+        status.innerHTML =
+            "<p>No loaded scan to save.</p>";
+        return;
+    }
+
+    button.disabled = true;
+
+    status.innerHTML =
+        "<p>Saving loaded scan...</p>";
+
+    try{
+
+        const response = await fetch(
+            "/api/tracking/save",
+            {
+                method: "POST",
+                headers: {
+                    "Content-Type":
+                        "application/json"
+                },
+                body: JSON.stringify({
+                    sport: scan.sport || (document.getElementById("scannerSport")?.value || "MLB"),
+                    results: scan.results
+                })
+            }
+        );
+
+        const data =
+            await response.json();
+
+        if(!response.ok){
+            throw new Error(
+                data.error ||
+                "Save failed."
+            );
+        }
+
+        status.innerHTML =
+            "<p><strong>Saved:</strong> "
+            + data.saved
+            + " new props"
+            + " &nbsp; | &nbsp; "
+            + "<strong>Already saved:</strong> "
+            + data.duplicates
+            + " &nbsp; | &nbsp; "
+            + "<strong>Skipped:</strong> "
+            + data.skipped
+            + "</p>";
+
+    }catch(error){
+
+        status.innerHTML =
+            "<p>Save error: "
+            + error.message
+            + "</p>";
+
+    }finally{
+
+        button.disabled = false;
+
+    }
+}
+
+
+function runSharedScanner(){
+    const sport = document.getElementById("scannerSport").value;
+
+    if(sport === "MLB"){
+        return runMLBScanner();
+    }
+
+    return runWNBAScanner();
+}
+
+
+async function runWNBAScanner(){
+    const button = document.getElementById("runMLBScanner");
+    const status = document.getElementById("scannerStatus");
+    const summary = document.getElementById("scannerSummary");
+    const results = document.getElementById("scannerResults");
+
+    const prop = document.getElementById("scannerProp").value;
+    const decision = document.getElementById("scannerDecision").value;
+    const confidence = document.getElementById("scannerConfidence").value;
+
+    button.disabled = true;
+    button.textContent = "Scanning WNBA...";
+
+    status.innerHTML =
+        "<p><strong>Scanning live WNBA PrizePicks board...</strong></p>";
+
+    summary.innerHTML = "";
+    results.innerHTML = "";
+
+    try{
+        const params = new URLSearchParams({prop});
+
+        const response = await fetch(
+            "/api/wnba/prizepicks-scanner?" + params.toString()
+        );
+
+        const data = await response.json();
+
+        if(
+            typeof registerScannerSnapshot === "function" &&
+            data &&
+            Array.isArray(data.results)
+        ){
+            registerScannerSnapshot(
+                "WNBA",
+                data,
+                false
+            );
+        }
+
+
+        if(!response.ok || data.error){
+            throw new Error(
+                data.error || "WNBA scanner request failed"
+            );
+        }
+
+        window.currentMLBScannerData = data;
+
+        let rows = data.results || [];
+
+        rows = rows.filter(row => {
+            if(decision === "PASS"){
+                return row.lean === "PASS";
+            }
+
+            if(!row.qualifies){
+                return false;
+            }
+
+            if(
+                decision !== "ALL" &&
+                row.lean !== decision
+            ){
+                return false;
+            }
+
+            if(
+                confidence !== "ALL" &&
+                row.confidence !== confidence
+            ){
+                return false;
+            }
+
+            return true;
+        });
+
+        const apiSummary = data.summary || {};
+
+        const boardCount =
+            apiSummary.board_props_found ??
+            data.board_props_found ??
+            0;
+
+        const analyzedCount =
+            apiSummary.players_analyzed ??
+            data.players_analyzed ??
+            0;
+
+        const verifiedCount =
+            apiSummary.verified_count ??
+            data.verified_count ??
+            0;
+
+        const pendingCount =
+            apiSummary.pending_count ??
+            data.pending_count ??
+            0;
+
+        const passCount =
+            apiSummary.pass_count ??
+            data.pass_count ??
+            0;
+
+        const marketCheckedCount =
+            apiSummary.market_checked_count ??
+            data.market_checked_count ??
+            0;
+
+        summary.innerHTML = `
+            <p>
+                <strong>WNBA</strong> ·
+                PrizePicks Props: ${boardCount} ·
+                Analyzed: ${analyzedCount} ·
+                Showing: ${rows.length} ·
+                🟢 Verified: ${verifiedCount} ·
+                🟡 Pending: ${pendingCount} ·
+                🔴 Pass: ${passCount} ·
+                Market Checked: ${marketCheckedCount}
+            </p>
+        `;
+
+        if(rows.length === 0){
+            results.innerHTML =
+                "<p>No WNBA props passed the current filters.</p>";
+            return;
+        }
+
+        let html = `
+        <div style="overflow-x:auto">
+        <table>
+        <thead>
+        <tr>
+            <th>Player</th>
+            <th>Prop</th>
+            <th>Line</th>
+            <th>Projection</th>
+            <th>Pick</th>
+            <th>Probability</th>
+            <th>Confidence</th>
+            <th>Stage</th>
+            <th>Market</th>
+            <th>Readiness</th>
+        </tr>
+        </thead>
+        <tbody>
+        `;
+
+        for(const row of rows){
+
+            let probability = null;
+
+            const readiness = row.readiness || "PASS";
+
+            let readinessText = "🔴 PASS";
+
+            if(readiness === "VERIFIED"){
+                readinessText = "🟢 VERIFIED";
+            }
+            else if(readiness === "STRONG — PREGAME PENDING"){
+                readinessText = "🟡 PREGAME PENDING";
+            }
+
+            if(row.lean === "MORE"){
+                probability = row.p_more;
+            }else if(row.lean === "LESS"){
+                probability = row.p_less;
+            }
+
+            const probabilityText =
+                probability == null
+                ? "N/A"
+                : (Number(probability) * 100).toFixed(1) + "%";
+
+            const projectionText =
+                row.projection == null
+                ? "N/A"
+                : Number(row.projection).toFixed(2);
+
+            const marketText =
+                row.independent_market_available
+                ? `${row.independent_market_lean || "NEUTRAL"} · ${row.independent_market_books || 0} books`
+                : "Pending";
+
+            html += `
+            <tr>
+                <td>
+                    <strong>${row.player}</strong><br>
+                    <small>${row.team || ""} vs ${row.opponent || "?"}</small>
+                </td>
+                <td>${row.pp_prop}</td>
+                <td>${row.pp_line}</td>
+                <td>${projectionText}</td>
+                <td><strong>${row.lean}</strong></td>
+                <td>${probabilityText}</td>
+                <td>${row.confidence}</td>
+                <td>${row.scan_stage || "N/A"}</td>
+                <td>${marketText}</td>
+                <td>
+                    <strong>
+                        ${readinessText}
+                    </strong>
+                </td>
+            </tr>
+            `;
+        }
+
+        html += "</tbody></table></div>";
+        results.innerHTML = html;
+
+        const saveButton =
+            document.getElementById("saveMLBScannerResults");
+
+        if(saveButton){
+            saveButton.disabled = !(data.results || []).length;
+        }
+
+    }catch(error){
+
+        status.innerHTML =
+            `<p><strong>WNBA scanner error:</strong> ${error.message}</p>`;
+
+    }finally{
+
+        button.disabled = false;
+        button.textContent = "Scan PrizePicks";
+
+    }
+}
+
+
+document.addEventListener("DOMContentLoaded", function(){
+    updateScannerSport();
+});
+
+</script>
 
 </body>
 </html>
+
+
+<script>
+
+window.scannerSportCache =
+    window.scannerSportCache || {};
+
+window.lastFullBoardHTML =
+    window.lastFullBoardHTML || {};
+
+window.topPicksMode = "FULL";
+
+
+function tpNumber(value, fallback=0){
+
+    const n = Number(value);
+
+    return Number.isFinite(n)
+        ? n
+        : fallback;
+}
+
+
+function tpProbability(row){
+
+    let p = tpNumber(
+        row.strongest_probability,
+        NaN
+    );
+
+    if(!Number.isFinite(p)){
+
+        if(row.lean === "MORE"){
+            p = tpNumber(row.p_more, 0.50);
+        }
+        else if(row.lean === "LESS"){
+            p = tpNumber(row.p_less, 0.50);
+        }
+        else{
+            p = 0.50;
+        }
+    }
+
+    return Math.max(
+        0,
+        Math.min(1, p)
+    );
+}
+
+
+function tpEdgeRatio(row){
+
+    const line =
+        Math.abs(
+            tpNumber(row.line, 0)
+        );
+
+    const projection =
+        tpNumber(row.projection, NaN);
+
+    if(
+        !Number.isFinite(projection) ||
+        line <= 0
+    ){
+        return 0;
+    }
+
+    const raw =
+        Math.abs(projection - line);
+
+    return Math.min(
+        1,
+        raw / Math.max(line, 1)
+    );
+}
+
+
+function tpReadiness(row){
+
+    return String(
+        row.readiness ||
+        row.status ||
+        ""
+    ).toUpperCase();
+}
+
+
+function tpMarketAgreement(row){
+
+    const agreement =
+        String(
+            row.market_agreement ||
+            ""
+        ).toUpperCase();
+
+    const action =
+        String(
+            row.market_recommended_action ||
+            row.independent_market_lean ||
+            ""
+        ).toUpperCase();
+
+    const lean =
+        String(row.lean || "").toUpperCase();
+
+    if(
+        action &&
+        (action === "MORE" || action === "LESS")
+    ){
+        if(action === lean){
+            return 1;
+        }
+
+        return -1;
+    }
+
+    if(
+        agreement.includes("AGREE") &&
+        !agreement.includes("DISAGREE")
+    ){
+        return 1;
+    }
+
+    if(
+        agreement.includes("DISAGREE") ||
+        agreement.includes("CONFLICT")
+    ){
+        return -1;
+    }
+
+    return 0;
+}
+
+
+function topPickScore(row){
+
+    const sport =
+        String(row.sport || "").toUpperCase();
+
+    const lean =
+        String(row.lean || "").toUpperCase();
+
+    const readiness =
+        tpReadiness(row);
+
+    const confidence =
+        String(
+            row.confidence || ""
+        ).toUpperCase();
+
+    const probability =
+        tpProbability(row);
+
+    const edgeRatio =
+        tpEdgeRatio(row);
+
+    const market =
+        tpMarketAgreement(row);
+
+    let score = 0;
+    let reasons = [];
+    let warnings = [];
+
+    // --------------------------------------------------------
+    // HARD EXCLUSIONS
+    // --------------------------------------------------------
+
+    if(
+        lean !== "MORE" &&
+        lean !== "LESS"
+    ){
+        return {
+            score: 0,
+            eligible: false,
+            reasons: [],
+            warnings: ["No actionable model side"]
+        };
+    }
+
+    if(
+        readiness === "PASS" ||
+        String(row.status || "").toUpperCase() === "PASS"
+    ){
+        return {
+            score: 0,
+            eligible: false,
+            reasons: [],
+            warnings: ["Model marked PASS"]
+        };
+    }
+
+    if(row.qualifies === false){
+        return {
+            score: 0,
+            eligible: false,
+            reasons: [],
+            warnings: ["Did not qualify"]
+        };
+    }
+
+    if(market === -1){
+        return {
+            score: 0,
+            eligible: false,
+            reasons: [],
+            warnings: ["Independent market conflicts"]
+        };
+    }
+
+    // --------------------------------------------------------
+    // MODEL PROBABILITY — 0 TO 32
+    // 58% = beginning of useful range.
+    // 73% = current model ceiling area.
+    // --------------------------------------------------------
+
+    const probabilityScore =
+        Math.max(
+            0,
+            Math.min(
+                32,
+                ((probability - 0.50) / 0.23) * 32
+            )
+        );
+
+    score += probabilityScore;
+
+    if(probability >= 0.67){
+        reasons.push(
+            "strong model probability"
+        );
+    }
+    else if(probability >= 0.62){
+        reasons.push(
+            "solid model probability"
+        );
+    }
+
+    // --------------------------------------------------------
+    // NORMALIZED PROJECTION EDGE — 0 TO 12
+    // Prevents a large raw-number prop from automatically winning.
+    // --------------------------------------------------------
+
+    score += Math.min(
+        12,
+        edgeRatio * 20
+    );
+
+    if(edgeRatio >= 0.20){
+        reasons.push(
+            "meaningful projection edge"
+        );
+    }
+
+    // --------------------------------------------------------
+    // CONFIDENCE — 0 TO 8
+    // --------------------------------------------------------
+
+    if(confidence === "HIGH"){
+        score += 8;
+        reasons.push("high confidence");
+    }
+    else if(confidence === "MODERATE"){
+        score += 4;
+    }
+
+    // --------------------------------------------------------
+    // READINESS — 0 TO 16
+    // VERIFIED gets preference.
+    // Pending can still appear for later games.
+    // --------------------------------------------------------
+
+    if(
+        readiness.includes("VERIFIED")
+    ){
+        score += 16;
+        reasons.push("pregame verified");
+    }
+    else if(
+        readiness.includes("STRONG") ||
+        readiness.includes("PENDING")
+    ){
+        score += 7;
+        warnings.push(
+            "pregame confirmation pending"
+        );
+    }
+
+    // --------------------------------------------------------
+    // INDEPENDENT MARKET — - / + 10
+    // --------------------------------------------------------
+
+    if(market === 1){
+        score += 10;
+        reasons.push(
+            "independent market agrees"
+        );
+    }
+    else{
+        warnings.push(
+            "market confirmation limited"
+        );
+    }
+
+    // ========================================================
+    // MLB-SPECIFIC STRUCTURAL CHECKS
+    // ========================================================
+
+    if(sport === "MLB"){
+
+        const lineup =
+            String(
+                row.lineup_status ||
+                row.confirmed_lineup ||
+                ""
+            ).toUpperCase();
+
+        const order =
+            tpNumber(
+                row.batting_order,
+                0
+            );
+
+        const expectedPA =
+            tpNumber(
+                row.expected_pa,
+                0
+            );
+
+        const starterLabel =
+            String(
+                row.starter_matchup ||
+                row.starter_matchup_label ||
+                ""
+            ).toUpperCase();
+
+        const handLabel =
+            String(
+                row.handedness_matchup ||
+                row.handedness_label ||
+                (
+                    row.handedness_stats &&
+                    row.handedness_stats.label
+                ) ||
+                ""
+            ).toUpperCase();
+
+        if(
+            lineup.includes("CONFIRMED") ||
+            row.lineup_confirmed === true
+        ){
+            score += 7;
+            reasons.push(
+                "lineup confirmed"
+            );
+        }
+
+        if(expectedPA >= 4){
+            score += 4;
+            reasons.push(
+                "strong plate-appearance opportunity"
+            );
+        }
+
+        if(order >= 1 && order <= 5){
+            score += 3;
+            reasons.push(
+                "top-half batting order"
+            );
+        }
+
+        if(
+            starterLabel.includes("FAVORABLE")
+        ){
+            score += 5;
+            reasons.push(
+                "starter matchup supports pick"
+            );
+        }
+
+        if(
+            handLabel.includes("FAVORABLE") &&
+            !handLabel.includes("UNFAVORABLE")
+        ){
+            score += 3;
+            reasons.push(
+                "handedness split supports pick"
+            );
+        }
+
+        if(
+            handLabel.includes("UNFAVORABLE")
+        ){
+            score -= 3;
+            warnings.push(
+                "handedness split unfavorable"
+            );
+        }
+    }
+
+    // ========================================================
+    // WNBA-SPECIFIC STRUCTURAL CHECKS
+    // ========================================================
+
+    if(sport === "WNBA"){
+
+        const agreement =
+            tpNumber(
+                row.window_agreement,
+                0
+            );
+
+        const roleUnstable =
+            row.role_unstable === true;
+
+        const disagreement =
+            row.model_disagreement === true;
+
+        const minutes =
+            row.minutes_context || {};
+
+        const expectedMinutes =
+            tpNumber(
+                minutes.expected_minutes,
+                0
+            );
+
+        const matchup =
+            tpNumber(
+                row.matchup_multiplier,
+                1
+            );
+
+        const injuryStatus =
+            String(
+                row.injury_status || ""
+            ).toUpperCase();
+
+        if(agreement >= 3){
+            score += 7;
+            reasons.push(
+                "multi-window agreement"
+            );
+        }
+        else if(agreement === 2){
+            score += 3;
+        }
+
+        if(roleUnstable){
+            score -= 10;
+            warnings.push(
+                "role/minutes unstable"
+            );
+        }
+        else{
+            score += 5;
+            reasons.push(
+                "role stable"
+            );
+        }
+
+        if(disagreement){
+            score -= 8;
+            warnings.push(
+                "model windows disagree"
+            );
+        }
+        else{
+            score += 4;
+        }
+
+        if(expectedMinutes >= 30){
+            score += 4;
+            reasons.push(
+                "strong expected minutes"
+            );
+        }
+
+        if(
+            injuryStatus.includes("ACTIVE") ||
+            injuryStatus.includes("AVAILABLE")
+        ){
+            score += 5;
+            reasons.push(
+                "availability confirmed"
+            );
+        }
+
+        // Matchup support depends on the chosen direction.
+        if(
+            lean === "MORE" &&
+            matchup > 1.01
+        ){
+            score += 4;
+            reasons.push(
+                "matchup supports MORE"
+            );
+        }
+
+        if(
+            lean === "LESS" &&
+            matchup < 0.99
+        ){
+            score += 4;
+            reasons.push(
+                "matchup supports LESS"
+            );
+        }
+
+        if(
+            lean === "MORE" &&
+            matchup < 0.98
+        ){
+            score -= 3;
+            warnings.push(
+                "matchup works against MORE"
+            );
+        }
+
+        if(
+            lean === "LESS" &&
+            matchup > 1.02
+        ){
+            score -= 3;
+            warnings.push(
+                "matchup works against LESS"
+            );
+        }
+    }
+
+    // --------------------------------------------------------
+    // FINAL NORMALIZATION
+    // --------------------------------------------------------
+
+    score = Math.max(
+        0,
+        Math.min(100, score)
+    );
+
+    // Top Picks should require actual structural support.
+    const eligible =
+        probability >= 0.58 &&
+        score >= 52;
+
+    return {
+        score:
+            Math.round(score * 10) / 10,
+
+        eligible,
+
+        reasons,
+
+        warnings
+    };
+}
+
+
+function getSportTopPicks(sport){
+
+    sport =
+        String(sport || "").toUpperCase();
+
+    const scan =
+        window.scannerSportCache[sport];
+
+    if(
+        !scan ||
+        !Array.isArray(scan.results)
+    ){
+        return [];
+    }
+
+    return scan.results
+        .map(row => {
+
+            const copy =
+                Object.assign({}, row);
+
+            copy.sport =
+                copy.sport || sport;
+
+            copy.top_pick =
+                topPickScore(copy);
+
+            return copy;
+        })
+        .filter(
+            row => row.top_pick.eligible
+        )
+        .sort(
+            (a, b) =>
+                b.top_pick.score -
+                a.top_pick.score
+        );
+}
+
+
+function getOverallTopPicks(){
+
+    const combined = [
+        ...getSportTopPicks("WNBA"),
+        ...getSportTopPicks("MLB")
+    ];
+
+    return combined.sort(
+        (a, b) => {
+
+            // VERIFIED wins ties/near-ties.
+            const aVerified =
+                tpReadiness(a).includes(
+                    "VERIFIED"
+                ) ? 1 : 0;
+
+            const bVerified =
+                tpReadiness(b).includes(
+                    "VERIFIED"
+                ) ? 1 : 0;
+
+            const scoreDifference =
+                b.top_pick.score -
+                a.top_pick.score;
+
+            if(
+                Math.abs(scoreDifference) >= 3
+            ){
+                return scoreDifference;
+            }
+
+            if(aVerified !== bVerified){
+                return bVerified - aVerified;
+            }
+
+            return (
+                tpProbability(b) -
+                tpProbability(a)
+            );
+        }
+    );
+}
+
+
+function topPickGrade(score){
+
+    if(score >= 82){
+        return "ELITE";
+    }
+
+    if(score >= 72){
+        return "STRONG";
+    }
+
+    if(score >= 62){
+        return "GOOD";
+    }
+
+    return "LEAN";
+}
+
+
+function escapeTopPickHTML(value){
+
+    return String(
+        value === null ||
+        value === undefined
+            ? ""
+            : value
+    )
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+
+function renderTopPicks(rows, title){
+
+    const results =
+        document.getElementById(
+            "scannerResults"
+        );
+
+    const summary =
+        document.getElementById(
+            "scannerSummary"
+        );
+
+    if(!results || !summary){
+        return;
+    }
+
+    if(!rows.length){
+
+        summary.innerHTML = `
+            <div style="
+                padding:14px;
+                border:1px solid #5f5135;
+                border-radius:10px;
+                margin-bottom:16px;
+            ">
+                <strong>${escapeTopPickHTML(title)}</strong>
+                &nbsp; | &nbsp;
+                No props currently passed the Top Picks engine.
+            </div>
+        `;
+
+        results.innerHTML = `
+            <div style="
+                padding:18px;
+                border:1px solid #444;
+                border-radius:10px;
+            ">
+                No qualifying Top Picks are available from the
+                scans currently loaded.
+            </div>
+        `;
+
+        return;
+    }
+
+    summary.innerHTML = `
+        <div style="
+            padding:14px;
+            border:1px solid #5f5135;
+            border-radius:10px;
+            margin-bottom:16px;
+        ">
+            <strong>${escapeTopPickHTML(title)}</strong>
+            &nbsp; | &nbsp;
+            Qualified: ${rows.length}
+            &nbsp; | &nbsp;
+            Ranked by model + structural support,
+            not probability alone.
+        </div>
+    `;
+
+    let html = `
+        <div style="overflow-x:auto;">
+        <table style="
+            width:100%;
+            border-collapse:collapse;
+        ">
+            <thead>
+                <tr>
+                    <th style="padding:10px;text-align:center;">
+                        Rank
+                    </th>
+
+                    <th style="padding:10px;text-align:left;">
+                        Sport
+                    </th>
+
+                    <th style="padding:10px;text-align:left;">
+                        Player
+                    </th>
+
+                    <th style="padding:10px;text-align:left;">
+                        Prop
+                    </th>
+
+                    <th style="padding:10px;text-align:center;">
+                        Line
+                    </th>
+
+                    <th style="padding:10px;text-align:center;">
+                        Pick
+                    </th>
+
+                    <th style="padding:10px;text-align:center;">
+                        Probability
+                    </th>
+
+                    <th style="padding:10px;text-align:center;">
+                        Selection Score
+                    </th>
+
+                    <th style="padding:10px;text-align:center;">
+                        Grade
+                    </th>
+
+                    <th style="padding:10px;text-align:left;">
+                        Why
+                    </th>
+
+                    <th style="padding:10px;text-align:left;">
+                        Status
+                    </th>
+                </tr>
+            </thead>
+            <tbody>
+    `;
+
+    rows.forEach(
+        (row, index) => {
+
+            const pick =
+                row.top_pick ||
+                topPickScore(row);
+
+            const probability =
+                tpProbability(row);
+
+            const reasons =
+                pick.reasons
+                    .slice(0, 4)
+                    .join(" · ");
+
+            const warnings =
+                pick.warnings
+                    .slice(0, 2)
+                    .join(" · ");
+
+            const why = [
+                reasons,
+                warnings
+                    ? "⚠ " + warnings
+                    : ""
+            ]
+            .filter(Boolean)
+            .join("<br>");
+
+            const readiness =
+                row.readiness ||
+                row.status ||
+                "UNKNOWN";
+
+            const prop =
+                row.prop ||
+                row.model_prop ||
+                "";
+
+            html += `
+                <tr style="
+                    border-top:1px solid #333;
+                ">
+                    <td style="
+                        padding:10px;
+                        text-align:center;
+                        font-weight:bold;
+                    ">
+                        ${index + 1}
+                    </td>
+
+                    <td style="padding:10px;">
+                        ${escapeTopPickHTML(row.sport)}
+                    </td>
+
+                    <td style="
+                        padding:10px;
+                        font-weight:bold;
+                    ">
+                        ${escapeTopPickHTML(row.player)}
+                    </td>
+
+                    <td style="padding:10px;">
+                        ${escapeTopPickHTML(prop)}
+                    </td>
+
+                    <td style="
+                        padding:10px;
+                        text-align:center;
+                    ">
+                        ${escapeTopPickHTML(row.line)}
+                    </td>
+
+                    <td style="
+                        padding:10px;
+                        text-align:center;
+                        font-weight:bold;
+                    ">
+                        ${escapeTopPickHTML(row.lean)}
+                    </td>
+
+                    <td style="
+                        padding:10px;
+                        text-align:center;
+                    ">
+                        ${(probability * 100).toFixed(1)}%
+                    </td>
+
+                    <td style="
+                        padding:10px;
+                        text-align:center;
+                        font-weight:bold;
+                    ">
+                        ${pick.score.toFixed(1)}
+                    </td>
+
+                    <td style="
+                        padding:10px;
+                        text-align:center;
+                        font-weight:bold;
+                    ">
+                        ${topPickGrade(pick.score)}
+                    </td>
+
+                    <td style="
+                        padding:10px;
+                        min-width:280px;
+                    ">
+                        ${why}
+                    </td>
+
+                    <td style="padding:10px;">
+                        ${escapeTopPickHTML(readiness)}
+                    </td>
+                </tr>
+            `;
+        }
+    );
+
+    html += `
+            </tbody>
+        </table>
+        </div>
+    `;
+
+    results.innerHTML = html;
+}
+
+
+function rememberCurrentFullBoard(){
+
+    const sport =
+        document.getElementById(
+            "scannerSport"
+        )?.value || "MLB";
+
+    const results =
+        document.getElementById(
+            "scannerResults"
+        );
+
+    const summary =
+        document.getElementById(
+            "scannerSummary"
+        );
+
+    if(
+        results &&
+        summary &&
+        window.topPicksMode === "FULL"
+    ){
+        window.lastFullBoardHTML[sport] = {
+            results: results.innerHTML,
+            summary: summary.innerHTML
+        };
+    }
+}
+
+
+function showSportTopPicks(){
+
+    rememberCurrentFullBoard();
+
+    const sport =
+        document.getElementById(
+            "scannerSport"
+        )?.value || "MLB";
+
+    const rows =
+        getSportTopPicks(sport);
+
+    window.topPicksMode =
+        "SPORT";
+
+    renderTopPicks(
+        rows,
+        "⭐ " + sport + " TOP PICKS"
+    );
+}
+
+
+function showOverallTopPicks(){
+
+    rememberCurrentFullBoard();
+
+    const hasMLB =
+        window.scannerSportCache.MLB &&
+        Array.isArray(
+            window.scannerSportCache.MLB.results
+        );
+
+    const hasWNBA =
+        window.scannerSportCache.WNBA &&
+        Array.isArray(
+            window.scannerSportCache.WNBA.results
+        );
+
+    if(!hasMLB || !hasWNBA){
+
+        const missing = [];
+
+        if(!hasMLB){
+            missing.push("MLB");
+        }
+
+        if(!hasWNBA){
+            missing.push("WNBA");
+        }
+
+        const results =
+            document.getElementById(
+                "scannerResults"
+            );
+
+        const summary =
+            document.getElementById(
+                "scannerSummary"
+            );
+
+        summary.innerHTML = `
+            <div style="
+                padding:14px;
+                border:1px solid #5f5135;
+                border-radius:10px;
+            ">
+                <strong>🏆 OVERALL TOP PICKS</strong>
+            </div>
+        `;
+
+        results.innerHTML = `
+            <div style="
+                padding:18px;
+                border:1px solid #444;
+                border-radius:10px;
+            ">
+                Run the
+                <strong>${missing.join(" + ")}</strong>
+                scanner first.
+                Overall Top Picks needs both sports loaded.
+            </div>
+        `;
+
+        return;
+    }
+
+    window.topPicksMode =
+        "OVERALL";
+
+    renderTopPicks(
+        getOverallTopPicks(),
+        "🏆 OVERALL TOP PICKS — MLB + WNBA"
+    );
+}
+
+
+function showFullScannerBoard(){
+
+    const sport =
+        document.getElementById(
+            "scannerSport"
+        )?.value || "MLB";
+
+    const saved =
+        window.lastFullBoardHTML[sport];
+
+    const results =
+        document.getElementById(
+            "scannerResults"
+        );
+
+    const summary =
+        document.getElementById(
+            "scannerSummary"
+        );
+
+    window.topPicksMode =
+        "FULL";
+
+    if(saved){
+
+        results.innerHTML =
+            saved.results;
+
+        summary.innerHTML =
+            saved.summary;
+
+        return;
+    }
+
+    const scan =
+        window.scannerSportCache[sport];
+
+    if(scan){
+        results.innerHTML = `
+            <div style="
+                padding:18px;
+                border:1px solid #444;
+                border-radius:10px;
+            ">
+                The ${sport} scan is loaded.
+                Click <strong>Scan PrizePicks</strong>
+                to restore its normal filtered board view.
+            </div>
+        `;
+    }
+    else{
+        results.innerHTML = `
+            <div style="
+                padding:18px;
+                border:1px solid #444;
+                border-radius:10px;
+            ">
+                Run the ${sport} scanner first.
+            </div>
+        `;
+    }
+}
+
+
+/*
+Capture the normal scanner board AFTER a scan renders.
+
+This observer does not alter the model or scanner response.
+It only remembers the rendered full-board HTML so the user
+can return from Top Picks without rescanning.
+*/
+document.addEventListener(
+    "DOMContentLoaded",
+    function(){
+
+        const results =
+            document.getElementById(
+                "scannerResults"
+            );
+
+        if(!results){
+            return;
+        }
+
+        let timer = null;
+
+        const observer =
+            new MutationObserver(
+                function(){
+
+                    clearTimeout(timer);
+
+                    timer = setTimeout(
+                        function(){
+
+                            if(
+                                window.topPicksMode !== "FULL"
+                            ){
+                                return;
+                            }
+
+                            const sport =
+                                document.getElementById(
+                                    "scannerSport"
+                                )?.value || "MLB";
+
+                            const summary =
+                                document.getElementById(
+                                    "scannerSummary"
+                                );
+
+                            if(
+                                results.innerHTML.trim() &&
+                                summary
+                            ){
+                                window.lastFullBoardHTML[sport] = {
+                                    results:
+                                        results.innerHTML,
+
+                                    summary:
+                                        summary.innerHTML
+                                };
+                            }
+
+                        },
+                        250
+                    );
+                }
+            );
+
+        observer.observe(
+            results,
+            {
+                childList: true,
+                subtree: true
+            }
+        );
+    }
+);
+
+</script>
+
+
+<script>
+
+window.scannerSportCache =
+    window.scannerSportCache || {};
+
+window.scannerSnapshotMeta =
+    window.scannerSnapshotMeta || {};
+
+
+function scannerSnapshotTime(value){
+
+    if(!value){
+        return "Unknown time";
+    }
+
+    const dt = new Date(value);
+
+    if(Number.isNaN(dt.getTime())){
+        return value;
+    }
+
+    return dt.toLocaleTimeString(
+        [],
+        {
+            hour: "numeric",
+            minute: "2-digit"
+        }
+    );
+}
+
+
+function scannerSnapshotLabel(sport){
+
+    sport = String(
+        sport || ""
+    ).toUpperCase();
+
+    const meta =
+        window.scannerSnapshotMeta[sport];
+
+    if(!meta){
+        return "";
+    }
+
+    let badge = "🟢 FRESH";
+
+    if(meta.stale){
+        badge = "🟠 STALE";
+    }
+    else if(meta.restored){
+        badge = "🔵 RESTORED";
+    }
+
+    return (
+        badge +
+        " · Last scan: " +
+        scannerSnapshotTime(
+            meta.scannedAt
+        )
+    );
+}
+
+
+function updateScannerSnapshotStatus(){
+
+    const box =
+        document.getElementById(
+            "scannerSnapshotStatus"
+        );
+
+    if(!box){
+        return;
+    }
+
+    const sport =
+        document.getElementById(
+            "scannerSport"
+        )?.value || "MLB";
+
+    const label =
+        scannerSnapshotLabel(sport);
+
+    if(!label){
+        box.style.display = "none";
+        box.innerHTML = "";
+        return;
+    }
+
+    box.style.display = "block";
+
+    box.innerHTML =
+        "<strong>" +
+        sport +
+        "</strong> &nbsp; " +
+        label;
+}
+
+
+function registerScannerSnapshot(
+    sport,
+    data,
+    restored=false
+){
+
+    sport = String(
+        sport || data?.sport || ""
+    ).toUpperCase();
+
+    if(
+        sport !== "MLB" &&
+        sport !== "WNBA"
+    ){
+        return;
+    }
+
+    window.scannerSportCache[sport] =
+        data;
+
+    const scannedAt =
+        data.snapshot_scanned_at ||
+        new Date().toISOString();
+
+    const stale =
+        data.snapshot_stale === true;
+
+    window.scannerSnapshotMeta[sport] = {
+        scannedAt,
+        restored:
+            restored ||
+            data.snapshot_restored === true,
+        stale
+    };
+
+    if(sport === "MLB"){
+        window.currentMLBScannerData =
+            data;
+    }
+
+    if(sport === "WNBA"){
+        window.currentWNBAScannerData =
+            data;
+    }
+
+    updateScannerSnapshotStatus();
+}
+
+
+async function restoreScannerSnapshots(){
+
+    try{
+
+        const response =
+            await fetch(
+                "/api/scanner/latest"
+            );
+
+        if(!response.ok){
+            return;
+        }
+
+        const payload =
+            await response.json();
+
+        const sports =
+            payload.sports || {};
+
+        for(
+            const sport of [
+                "MLB",
+                "WNBA"
+            ]
+        ){
+
+            const scan =
+                sports[sport];
+
+            if(
+                !scan ||
+                !Array.isArray(
+                    scan.results
+                )
+            ){
+                continue;
+            }
+
+            registerScannerSnapshot(
+                sport,
+                scan,
+                true
+            );
+        }
+
+        updateScannerSnapshotStatus();
+
+    }
+    catch(error){
+
+        console.warn(
+            "Scanner snapshot restore failed:",
+            error
+        );
+    }
+}
+
+
+document.addEventListener(
+    "DOMContentLoaded",
+    function(){
+
+        restoreScannerSnapshots();
+
+        const sport =
+            document.getElementById(
+                "scannerSport"
+            );
+
+        if(sport){
+
+            sport.addEventListener(
+                "change",
+                function(){
+                    updateScannerSnapshotStatus();
+                }
+            );
+        }
+    }
+);
+
+</script>
+
+
+<script>
+
+function topPickSportIsStale(sport){
+
+    sport = String(
+        sport || ""
+    ).toUpperCase();
+
+    const meta =
+        window.scannerSnapshotMeta?.[
+            sport
+        ];
+
+    return (
+        meta &&
+        meta.stale === true
+    );
+}
+
+
+if(
+    typeof getSportTopPicks ===
+    "function"
+){
+
+    const originalGetSportTopPicks =
+        getSportTopPicks;
+
+    getSportTopPicks =
+        function(sport){
+
+            sport = String(
+                sport || ""
+            ).toUpperCase();
+
+            if(
+                topPickSportIsStale(
+                    sport
+                )
+            ){
+                return [];
+            }
+
+            return originalGetSportTopPicks(
+                sport
+            );
+        };
+}
+
+</script>
+
