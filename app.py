@@ -5,8 +5,14 @@ import requests
 
 from main import get_player_games, get_stat, predict_prop_v1, CURRENT_SEASON, DATABASE
 from mlb_model import (
-    HITTER_PROPS, PITCHER_PROPS,
-    mlb_teams, mlb_team_roster, mlb_pregame_game_context, analyze_mlb_verified
+    HITTER_PROPS,
+    PITCHER_PROPS,
+    mlb_teams,
+    mlb_team_roster,
+    mlb_pregame_game_context,
+    analyze_mlb_verified,
+    clear_mlb_api_cache,
+    set_mlb_api_cache,
 )
 
 app = Flask(__name__)
@@ -179,6 +185,69 @@ def build_wnba_history(games, prop, opponent=None):
 # MLB schedule helpers
 # ----------------------------
 
+def game_scan_stage(start_time, status=None):
+    """
+    Classify a game for the daily prop scanner.
+
+    PRELIMINARY = more than 3 hours away
+    MONITORING  = 1 to 3 hours away
+    FINAL CHECK = less than 1 hour away
+    LOCKED      = game has started / is no longer pregame
+    """
+    if not start_time:
+        return {
+            "stage": "UNKNOWN",
+            "minutes_to_game": None,
+            "eligible_for_best_picks": False,
+        }
+
+    try:
+        start = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
+        now = datetime.now(start.tzinfo)
+
+        minutes = (start - now).total_seconds() / 60.0
+
+        status_text = str(status or "").lower()
+
+        locked_words = (
+            "in progress",
+            "final",
+            "completed",
+            "game over",
+            "live",
+        )
+
+        if minutes <= 0 or any(word in status_text for word in locked_words):
+            stage = "LOCKED"
+            eligible = False
+
+        elif minutes <= 60:
+            stage = "FINAL CHECK"
+            eligible = True
+
+        elif minutes <= 180:
+            stage = "MONITORING"
+            eligible = False
+
+        else:
+            stage = "PRELIMINARY"
+            eligible = False
+
+        return {
+            "stage": stage,
+            "minutes_to_game": round(minutes, 1),
+            "eligible_for_best_picks": eligible,
+        }
+
+    except Exception:
+        return {
+            "stage": "UNKNOWN",
+            "minutes_to_game": None,
+            "eligible_for_best_picks": False,
+        }
+
+
+
 def mlb_schedule_for_date(game_date):
     """
     Get MLB games for one date from MLB's schedule API.
@@ -229,6 +298,7 @@ def mlb_schedule_for_date(game_date):
             games.append({
                 "game_id": str(g.get("gamePk") or ""),
                 "date": game_date,
+                "start_time": g.get("gameDate"),
                 "status": ((g.get("status") or {}).get("detailedState") or "Unknown"),
                 "away": {
                     "id": away_obj.get("id"),
@@ -325,6 +395,203 @@ def mlb_matchup_for_team(game_date, team_id):
         "team_probable": None,
         "opponent_probable": None,
     }
+
+
+# ----------------------------
+# MLB DAILY PROP SCANNER
+# ----------------------------
+
+def scan_mlb_hitter_fantasy_score(game_date, line=4.5, direction="MORE"):
+    """
+    Scan all active non-pitchers in MLB games on the selected date.
+
+    This does NOT replace the normal MLB analyzer.
+    It reuses analyze_mlb_verified() for every eligible hitter.
+    """
+
+    # Fresh data at the beginning of every scanner run.
+    # Reuse duplicate MLB API requests only within this scan.
+    clear_mlb_api_cache()
+    set_mlb_api_cache(True)
+
+    direction = str(direction or "MORE").upper()
+
+    if direction not in ("MORE", "LESS"):
+        raise ValueError("Direction must be MORE or LESS.")
+
+    line = float(line)
+
+    games = mlb_schedule_for_date(game_date)
+
+    results = []
+    errors = []
+
+    for game in games:
+
+        timing = game_scan_stage(
+            game.get("start_time"),
+            game.get("status"),
+        )
+
+        # Do not scan games that have already started.
+        if timing["stage"] == "LOCKED":
+            continue
+
+        sides = [
+            ("away", "home"),
+            ("home", "away"),
+        ]
+
+        for team_side, opponent_side in sides:
+
+            team = game.get(team_side) or {}
+            opponent = game.get(opponent_side) or {}
+
+            team_id = team.get("id")
+            opponent_id = opponent.get("id")
+
+            if not team_id or not opponent_id:
+                continue
+
+            try:
+                roster = mlb_team_roster(int(team_id))
+            except Exception as e:
+                errors.append({
+                    "team": team.get("name"),
+                    "error": str(e),
+                })
+                continue
+
+            hitters = [
+                player
+                for player in roster
+                if player.get("position_type") != "Pitcher"
+                and player.get("name")
+            ]
+
+            for player in hitters:
+
+                player_name = player["name"]
+
+                try:
+                    analysis = analyze_mlb_verified(
+                        player_name,
+                        "hitter",
+                        "hitter_fantasy_score",
+                        line,
+                        int(team_id),
+                        int(opponent_id),
+                        opponent.get("name"),
+                    )
+
+                    p_more = float(
+                        analysis.get("p_more") or 0.0
+                    )
+
+                    p_less = float(
+                        analysis.get("p_less") or (1.0 - p_more)
+                    )
+
+                    selected_probability = (
+                        p_more
+                        if direction == "MORE"
+                        else p_less
+                    )
+
+                    pregame = analysis.get("pregame") or {}
+
+                    # A scanner candidate must agree with the
+                    # requested direction. PASS stays PASS.
+                    qualifies = (
+                        analysis.get("lean") == direction
+                        and analysis.get("confidence") in (
+                            "MODERATE",
+                            "HIGH",
+                        )
+                    )
+
+                    # FINAL PICK requires:
+                    # 1. model qualifies
+                    # 2. game is in FINAL CHECK
+                    # 3. hitter is confirmed in starting lineup
+                    final_pick = (
+                        qualifies
+                        and timing["stage"] == "FINAL CHECK"
+                        and pregame.get("in_starting_lineup") is True
+                    )
+
+                    results.append({
+                        "player": player_name,
+                        "player_id": player.get("id"),
+                        "team": team.get("name"),
+                        "team_id": team_id,
+                        "opponent": opponent.get("name"),
+                        "opponent_id": opponent_id,
+                        "game_id": game.get("game_id"),
+                        "game_status": game.get("status"),
+                        "start_time": game.get("start_time"),
+                        "scan_stage": timing["stage"],
+                        "minutes_to_game": timing["minutes_to_game"],
+                        "prop": "hitter_fantasy_score",
+                        "line": line,
+                        "direction": direction,
+                        "projection": analysis.get("projection"),
+                        "p_more": p_more,
+                        "p_less": p_less,
+                        "selected_probability": selected_probability,
+                        "lean": analysis.get("lean"),
+                        "confidence": analysis.get("confidence"),
+                        "qualifies": qualifies,
+                        "final_pick": final_pick,
+                        "in_starting_lineup": pregame.get(
+                            "in_starting_lineup"
+                        ),
+                        "batting_order": pregame.get(
+                            "batting_order"
+                        ),
+                        "lineup_warning": analysis.get(
+                            "lineup_warning"
+                        ),
+                    })
+
+                except Exception as e:
+                    errors.append({
+                        "player": player_name,
+                        "team": team.get("name"),
+                        "opponent": opponent.get("name"),
+                        "error": str(e),
+                    })
+
+    # Requested direction determines ranking.
+    results.sort(
+        key=lambda item: item["selected_probability"],
+        reverse=True,
+    )
+
+    scan_output = {
+        "date": game_date,
+        "prop": "hitter_fantasy_score",
+        "line": line,
+        "direction": direction,
+        "games_found": len(games),
+        "players_analyzed": len(results),
+        "qualifying_count": sum(
+            1 for item in results
+            if item["qualifies"]
+        ),
+        "final_pick_count": sum(
+            1 for item in results
+            if item["final_pick"]
+        ),
+        "results": results,
+        "errors": errors,
+    }
+
+    # Scanner is finished. Clear temporary responses so the
+    # normal MLB analyzer always starts with fresh API data.
+    set_mlb_api_cache(False)
+
+    return scan_output
 
 
 # ----------------------------
@@ -618,6 +885,44 @@ def index():
         hitter_props=HITTER_PROPS,
         pitcher_props=PITCHER_PROPS,
     )
+
+
+@app.route("/api/mlb/scanner", methods=["GET"])
+def api_mlb_scanner():
+    """
+    Scan today's MLB Hitter Fantasy Score board.
+
+    Query parameters:
+      date=YYYY-MM-DD
+      line=4.5
+      direction=MORE or LESS
+    """
+    try:
+        game_date = request.args.get("date")
+        line = float(request.args.get("line", 4.5))
+        direction = request.args.get("direction", "MORE").upper()
+
+        if not game_date:
+            from datetime import date
+            game_date = date.today().isoformat()
+
+        if direction not in ("MORE", "LESS"):
+            return jsonify({
+                "error": "Direction must be MORE or LESS."
+            }), 400
+
+        scan = scan_mlb_hitter_fantasy_score(
+            game_date,
+            line=line,
+            direction=direction,
+        )
+
+        return jsonify(scan)
+
+    except Exception as e:
+        return jsonify({
+            "error": str(e)
+        }), 500
 
 
 if __name__ == "__main__":

@@ -46,14 +46,45 @@ PITCHER_PROPS = [
 # MLB API
 # ============================================================
 
+_JSON_CACHE = {}
+_JSON_CACHE_ENABLED = False
+
+
+def clear_mlb_api_cache():
+    """Clear cached MLB API responses."""
+    _JSON_CACHE.clear()
+
+
+def set_mlb_api_cache(enabled=True):
+    """
+    Enable/disable temporary MLB API caching.
+
+    Intended for bulk scanner runs so identical MLB API
+    requests are not downloaded repeatedly.
+    """
+    global _JSON_CACHE_ENABLED
+    _JSON_CACHE_ENABLED = bool(enabled)
+
+    if not _JSON_CACHE_ENABLED:
+        clear_mlb_api_cache()
+
+
 def _json(url, timeout=12):
+    if _JSON_CACHE_ENABLED and url in _JSON_CACHE:
+        return _JSON_CACHE[url]
+
     req = urllib.request.Request(
         url,
         headers={"User-Agent": "SportsPropAI/1.0"},
     )
 
     with urllib.request.urlopen(req, timeout=timeout) as r:
-        return json.loads(r.read().decode("utf-8"))
+        data = json.loads(r.read().decode("utf-8"))
+
+    if _JSON_CACHE_ENABLED:
+        _JSON_CACHE[url] = data
+
+    return data
 
 
 def find_player(name):

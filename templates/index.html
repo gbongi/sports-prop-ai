@@ -661,5 +661,400 @@ loadTeams();
 remember();
 </script>
 
+
+
+<!-- ====================================================== -->
+<!-- MLB PROP SCANNER                                       -->
+<!-- ====================================================== -->
+
+<section id="mlb-scanner-section" style="
+    max-width:1100px;
+    margin:40px auto;
+    padding:24px;
+    border:1px solid #333;
+    border-radius:16px;
+">
+
+    <h2>⚾ MLB Prop Scanner</h2>
+
+    <p>
+        Scan today's MLB hitters using the full prediction model.
+        Preliminary and monitoring candidates are shown, but a
+        Final Pick requires the game to be near start time and the
+        player to be confirmed in the starting lineup.
+    </p>
+
+    <div style="
+        display:flex;
+        gap:12px;
+        flex-wrap:wrap;
+        align-items:end;
+        margin-bottom:20px;
+    ">
+
+        <div>
+            <label for="scannerDate">Date</label><br>
+            <input type="date" id="scannerDate">
+        </div>
+
+        <div>
+            <label for="scannerProp">Prop</label><br>
+            <select id="scannerProp">
+                <option value="hitter_fantasy_score">
+                    Hitter Fantasy Score
+                </option>
+            </select>
+        </div>
+
+        <div>
+            <label for="scannerLine">PrizePicks Line</label><br>
+            <input
+                type="number"
+                id="scannerLine"
+                value="4.5"
+                step="0.5"
+                style="width:100px;"
+            >
+        </div>
+
+        <div>
+            <label for="scannerDirection">Direction</label><br>
+            <select id="scannerDirection">
+                <option value="MORE">MORE</option>
+                <option value="LESS">LESS</option>
+            </select>
+        </div>
+
+        <button
+            type="button"
+            id="runMLBScanner"
+            onclick="runMLBScanner()"
+            style="
+                padding:10px 18px;
+                cursor:pointer;
+                font-weight:bold;
+            "
+        >
+            Scan MLB
+        </button>
+
+    </div>
+
+    <div id="scannerStatus"></div>
+    <div id="scannerSummary"></div>
+    <div id="scannerResults"></div>
+
+</section>
+
+
+<script>
+
+(function setScannerDate(){
+    const input = document.getElementById("scannerDate");
+
+    if(!input.value){
+        const now = new Date();
+        const local = new Date(
+            now.getTime() - now.getTimezoneOffset() * 60000
+        );
+
+        input.value = local.toISOString().slice(0,10);
+    }
+})();
+
+
+function scannerPercent(value){
+    if(value === null || value === undefined){
+        return "N/A";
+    }
+
+    return (Number(value) * 100).toFixed(1) + "%";
+}
+
+
+function scannerProjection(value){
+    if(value === null || value === undefined){
+        return "N/A";
+    }
+
+    return Number(value).toFixed(2);
+}
+
+
+function scannerStageBadge(stage){
+    if(stage === "FINAL CHECK"){
+        return "🟢 FINAL CHECK";
+    }
+
+    if(stage === "MONITORING"){
+        return "🟡 MONITORING";
+    }
+
+    if(stage === "PRELIMINARY"){
+        return "🔵 PRELIMINARY";
+    }
+
+    return stage || "UNKNOWN";
+}
+
+
+async function runMLBScanner(){
+
+    const button = document.getElementById("runMLBScanner");
+    const status = document.getElementById("scannerStatus");
+    const summary = document.getElementById("scannerSummary");
+    const results = document.getElementById("scannerResults");
+
+    const gameDate =
+        document.getElementById("scannerDate").value;
+
+    const line =
+        document.getElementById("scannerLine").value;
+
+    const direction =
+        document.getElementById("scannerDirection").value;
+
+    button.disabled = true;
+    button.textContent = "Scanning...";
+
+    status.innerHTML =
+        "<p><strong>Scanning today's MLB games...</strong> " +
+        "This can take around 20–40 seconds.</p>";
+
+    summary.innerHTML = "";
+    results.innerHTML = "";
+
+    try{
+
+        const params = new URLSearchParams({
+            date: gameDate,
+            line: line,
+            direction: direction
+        });
+
+        const response = await fetch(
+            "/api/mlb/scanner?" + params.toString()
+        );
+
+        const data = await response.json();
+
+        if(!response.ok || data.error){
+            throw new Error(
+                data.error || "Scanner request failed."
+            );
+        }
+
+        status.innerHTML = "";
+
+        summary.innerHTML = `
+            <div style="
+                padding:14px;
+                margin-bottom:18px;
+                border:1px solid #444;
+                border-radius:10px;
+            ">
+                <strong>${data.direction} ${data.line}</strong>
+                &nbsp; | &nbsp;
+                Games: ${data.games_found}
+                &nbsp; | &nbsp;
+                Players analyzed: ${data.players_analyzed}
+                &nbsp; | &nbsp;
+                Qualifying: ${data.qualifying_count}
+                &nbsp; | &nbsp;
+                Final Picks: ${data.final_pick_count}
+            </div>
+        `;
+
+        const candidates = data.results.filter(
+            r => r.qualifies || r.final_pick
+        );
+
+        if(candidates.length === 0){
+
+            results.innerHTML = `
+                <div style="
+                    padding:18px;
+                    border:1px solid #444;
+                    border-radius:10px;
+                ">
+                    <strong>No strong plays found.</strong>
+                    <br><br>
+                    The model did not find a ${data.direction}
+                    edge strong enough at ${data.line}.
+                </div>
+            `;
+
+            return;
+        }
+
+        let html = `
+            <div style="overflow-x:auto;">
+            <table style="
+                width:100%;
+                border-collapse:collapse;
+            ">
+                <thead>
+                    <tr>
+                        <th style="padding:10px;text-align:left;">
+                            Player
+                        </th>
+
+                        <th style="padding:10px;text-align:left;">
+                            Matchup
+                        </th>
+
+                        <th style="padding:10px;">
+                            Projection
+                        </th>
+
+                        <th style="padding:10px;">
+                            Probability
+                        </th>
+
+                        <th style="padding:10px;">
+                            Confidence
+                        </th>
+
+                        <th style="padding:10px;">
+                            Game Stage
+                        </th>
+
+                        <th style="padding:10px;">
+                            Lineup
+                        </th>
+
+                        <th style="padding:10px;">
+                            Status
+                        </th>
+                    </tr>
+                </thead>
+
+                <tbody>
+        `;
+
+        for(const r of candidates){
+
+            const probability =
+                data.direction === "MORE"
+                ? r.p_more
+                : r.p_less;
+
+            let lineup = "Waiting";
+
+            if(r.in_starting_lineup === true){
+                lineup =
+                    r.batting_order
+                    ? "Confirmed #" + r.batting_order
+                    : "Confirmed";
+            }
+
+            if(r.in_starting_lineup === false){
+                lineup = "Not Starting";
+            }
+
+            let pickStatus = "WATCH";
+
+            if(r.final_pick){
+                pickStatus = "🔥 FINAL PICK";
+            }
+            else if(r.qualifies){
+                pickStatus = "👀 CANDIDATE";
+            }
+
+            html += `
+                <tr style="border-top:1px solid #333;">
+
+                    <td style="padding:10px;">
+                        <strong>${r.player}</strong>
+                        <br>
+                        <small>${r.team}</small>
+                    </td>
+
+                    <td style="padding:10px;">
+                        vs ${r.opponent}
+                    </td>
+
+                    <td style="
+                        padding:10px;
+                        text-align:center;
+                    ">
+                        ${scannerProjection(r.projection)}
+                    </td>
+
+                    <td style="
+                        padding:10px;
+                        text-align:center;
+                    ">
+                        <strong>
+                            ${scannerPercent(probability)}
+                        </strong>
+                    </td>
+
+                    <td style="
+                        padding:10px;
+                        text-align:center;
+                    ">
+                        ${r.confidence}
+                    </td>
+
+                    <td style="
+                        padding:10px;
+                        text-align:center;
+                    ">
+                        ${scannerStageBadge(r.scan_stage)}
+                    </td>
+
+                    <td style="
+                        padding:10px;
+                        text-align:center;
+                    ">
+                        ${lineup}
+                    </td>
+
+                    <td style="
+                        padding:10px;
+                        text-align:center;
+                    ">
+                        <strong>${pickStatus}</strong>
+                    </td>
+
+                </tr>
+            `;
+        }
+
+        html += `
+                </tbody>
+            </table>
+            </div>
+        `;
+
+        results.innerHTML = html;
+
+    }
+    catch(error){
+
+        status.innerHTML = `
+            <div style="
+                padding:14px;
+                border:1px solid #a33;
+                border-radius:10px;
+            ">
+                <strong>Scanner error:</strong>
+                ${error.message}
+            </div>
+        `;
+
+    }
+    finally{
+
+        button.disabled = false;
+        button.textContent = "Scan MLB";
+
+    }
+}
+
+</script>
+
+
 </body>
 </html>
