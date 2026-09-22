@@ -1,0 +1,666 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
+    <title>
+        Sports Prop AI - Saved Results
+    </title>
+
+    <style>
+
+        body{
+            font-family:
+                Arial,
+                Helvetica,
+                sans-serif;
+
+            margin:0;
+            padding:24px;
+            background:#111;
+            color:#eee;
+        }
+
+        .page{
+            max-width:1500px;
+            margin:auto;
+        }
+
+        a{
+            color:#8ab4ff;
+        }
+
+        .controls,
+        .summary{
+            margin:20px 0;
+            padding:16px;
+            border:1px solid #333;
+            border-radius:12px;
+        }
+
+        .controls{
+            display:flex;
+            gap:12px;
+            align-items:center;
+            flex-wrap:wrap;
+        }
+
+        button,
+        select{
+            padding:9px 12px;
+            cursor:pointer;
+        }
+
+        .delete-date{
+            margin-left:auto;
+        }
+
+        .table-wrap{
+            overflow-x:auto;
+        }
+
+        table{
+            width:100%;
+            border-collapse:collapse;
+            min-width:1400px;
+        }
+
+        th,
+        td{
+            border-bottom:
+                1px solid #333;
+
+            padding:10px;
+            text-align:left;
+            white-space:nowrap;
+        }
+
+        th{
+            position:sticky;
+            top:0;
+            background:#1b1b1b;
+        }
+
+        .pass{
+            opacity:.65;
+        }
+
+        .empty{
+            padding:30px;
+            text-align:center;
+            opacity:.75;
+        }
+
+    </style>
+</head>
+
+<body>
+
+<div class="page">
+
+    <h1>📊 Saved Prediction Results</h1>
+
+    <p>
+        <a href="/">
+            ← Back to Scanner
+        </a>
+    </p>
+
+
+    <div class="controls">
+
+        <label for="dateFilter">
+            Game Date:
+        </label>
+
+        <select
+            id="dateFilter"
+            onchange="renderSelectedDate()"
+        >
+        </select>
+
+        <button
+            type="button"
+            onclick="selectToday()"
+        >
+            Today
+        </button>
+
+        <button
+            type="button"
+            class="delete-date"
+            id="deleteDateButton"
+            onclick="deleteSelectedDate()"
+        >
+            🗑 Delete This Date
+        </button>
+
+    </div>
+
+
+    <div
+        id="summary"
+        class="summary"
+    >
+        Loading saved predictions...
+    </div>
+
+
+    <div class="table-wrap">
+
+        <table>
+
+            <thead>
+
+                <tr>
+                    <th>Player</th>
+                    <th>Prop</th>
+                    <th>PP Line</th>
+                    <th>Projection</th>
+
+                    <th>Model</th>
+                    <th>Model %</th>
+                    <th>Confidence</th>
+
+                    <th>Market</th>
+                    <th>Market %</th>
+                    <th>Books</th>
+                    <th>Strength</th>
+
+                    <th>Market Check</th>
+
+                    <th>Final</th>
+                    <th>Status</th>
+
+                    <th>Actual</th>
+                    <th>Result</th>
+
+                    <th>Delete</th>
+                </tr>
+
+            </thead>
+
+            <tbody id="resultsBody">
+            </tbody>
+
+        </table>
+
+    </div>
+
+</div>
+
+
+<script>
+
+let allSavedRows = [];
+
+
+function localToday(){
+
+    const now = new Date();
+
+    const year =
+        now.getFullYear();
+
+    const month =
+        String(
+            now.getMonth() + 1
+        ).padStart(2, "0");
+
+    const day =
+        String(
+            now.getDate()
+        ).padStart(2, "0");
+
+    return `${year}-${month}-${day}`;
+}
+
+
+function gameDate(row){
+
+    const value =
+        row.game_start_time || "";
+
+    if(value.length >= 10){
+        return value.slice(0, 10);
+    }
+
+    return "UNKNOWN";
+}
+
+
+function pct(value){
+
+    if(
+        value === null ||
+        value === undefined
+    ){
+        return "—";
+    }
+
+    return (
+        Number(value) * 100
+    ).toFixed(1) + "%";
+}
+
+
+function number(value){
+
+    if(
+        value === null ||
+        value === undefined
+    ){
+        return "—";
+    }
+
+    return Number(value).toFixed(2);
+}
+
+
+function escapeHtml(value){
+
+    return String(
+        value ?? ""
+    )
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+
+function populateDates(){
+
+    const select =
+        document.getElementById(
+            "dateFilter"
+        );
+
+    const dates = [
+        ...new Set(
+            allSavedRows.map(gameDate)
+        )
+    ]
+    .filter(
+        value => value !== "UNKNOWN"
+    )
+    .sort()
+    .reverse();
+
+    const today =
+        localToday();
+
+    select.innerHTML = "";
+
+    // Always show Today, even if
+    // nothing has been saved yet.
+    const todayOption =
+        new Option(
+            `${today} — Today`,
+            today
+        );
+
+    select.add(todayOption);
+
+    for(const date of dates){
+
+        if(date === today){
+            continue;
+        }
+
+        select.add(
+            new Option(
+                date,
+                date
+            )
+        );
+    }
+
+    select.value = today;
+}
+
+
+function selectToday(){
+
+    const select =
+        document.getElementById(
+            "dateFilter"
+        );
+
+    select.value =
+        localToday();
+
+    renderSelectedDate();
+}
+
+
+function renderSelectedDate(){
+
+    const selectedDate =
+        document.getElementById(
+            "dateFilter"
+        ).value;
+
+    const rows =
+        allSavedRows.filter(
+            row =>
+                gameDate(row)
+                === selectedDate
+        );
+
+    const body =
+        document.getElementById(
+            "resultsBody"
+        );
+
+    const summary =
+        document.getElementById(
+            "summary"
+        );
+
+    const deleteDateButton =
+        document.getElementById(
+            "deleteDateButton"
+        );
+
+    summary.innerHTML =
+        "<strong>"
+        + rows.length
+        + "</strong> saved prediction"
+        + (rows.length === 1 ? "" : "s")
+        + " for <strong>"
+        + escapeHtml(selectedDate)
+        + "</strong>";
+
+    deleteDateButton.disabled =
+        rows.length === 0;
+
+    body.innerHTML = "";
+
+    if(rows.length === 0){
+
+        const tr =
+            document.createElement("tr");
+
+        tr.innerHTML = `
+            <td
+                colspan="17"
+                class="empty"
+            >
+                No saved predictions
+                for this date.
+            </td>
+        `;
+
+        body.appendChild(tr);
+
+        return;
+    }
+
+
+    for(const row of rows){
+
+        const tr =
+            document.createElement("tr");
+
+        const finalLean =
+            row.final_lean || "PASS";
+
+        tr.className =
+            finalLean.toLowerCase();
+
+        tr.innerHTML = `
+            <td>
+                <strong>
+                    ${escapeHtml(row.player)}
+                </strong>
+            </td>
+
+            <td>
+                ${escapeHtml(row.pp_prop)}
+            </td>
+
+            <td>
+                ${escapeHtml(row.pp_line)}
+            </td>
+
+            <td>
+                ${number(row.projection)}
+            </td>
+
+            <td>
+                ${escapeHtml(
+                    row.raw_lean || "—"
+                )}
+            </td>
+
+            <td>
+                ${pct(
+                    row.strongest_probability
+                )}
+            </td>
+
+            <td>
+                ${escapeHtml(
+                    row.raw_confidence || "—"
+                )}
+            </td>
+
+            <td>
+                ${escapeHtml(
+                    row.market_lean || "—"
+                )}
+            </td>
+
+            <td>
+                ${pct(
+                    row.market_probability
+                )}
+            </td>
+
+            <td>
+                ${escapeHtml(
+                    row.market_books ?? "—"
+                )}
+            </td>
+
+            <td>
+                ${escapeHtml(
+                    row.market_strength || "—"
+                )}
+            </td>
+
+            <td>
+                ${escapeHtml(
+                    row.market_check || "—"
+                )}
+            </td>
+
+            <td>
+                <strong>
+                    ${escapeHtml(finalLean)}
+                </strong>
+            </td>
+
+            <td>
+                ${escapeHtml(
+                    row.scanner_status || "—"
+                )}
+            </td>
+
+            <td>
+                ${number(row.actual_value)}
+            </td>
+
+            <td>
+                ${escapeHtml(
+                    row.actual_result ||
+                    "PENDING"
+                )}
+            </td>
+
+            <td>
+                <button
+                    type="button"
+                    onclick="deletePrediction(
+                        ${Number(row.id)}
+                    )"
+                >
+                    🗑
+                </button>
+            </td>
+        `;
+
+        body.appendChild(tr);
+    }
+}
+
+
+async function deletePrediction(id){
+
+    if(
+        !confirm(
+            "Delete this saved prediction?"
+        )
+    ){
+        return;
+    }
+
+    const response =
+        await fetch(
+            `/api/tracking/predictions/${id}`,
+            {
+                method: "DELETE"
+            }
+        );
+
+    const data =
+        await response.json();
+
+    if(!response.ok){
+        alert(
+            data.error ||
+            "Delete failed."
+        );
+        return;
+    }
+
+    allSavedRows =
+        allSavedRows.filter(
+            row =>
+                Number(row.id)
+                !== Number(id)
+        );
+
+    renderSelectedDate();
+}
+
+
+async function deleteSelectedDate(){
+
+    const select =
+        document.getElementById(
+            "dateFilter"
+        );
+
+    const selectedDate =
+        select.value;
+
+    const count =
+        allSavedRows.filter(
+            row =>
+                gameDate(row)
+                === selectedDate
+        ).length;
+
+    if(count === 0){
+        return;
+    }
+
+    if(
+        !confirm(
+            `Delete all ${count} saved predictions for ${selectedDate}?\n\nThis cannot be undone.`
+        )
+    ){
+        return;
+    }
+
+    const response =
+        await fetch(
+            `/api/tracking/date/${selectedDate}`,
+            {
+                method: "DELETE"
+            }
+        );
+
+    const data =
+        await response.json();
+
+    if(!response.ok){
+        alert(
+            data.error ||
+            "Delete failed."
+        );
+        return;
+    }
+
+    allSavedRows =
+        allSavedRows.filter(
+            row =>
+                gameDate(row)
+                !== selectedDate
+        );
+
+    populateDates();
+
+    alert(
+        `Deleted ${data.deleted} saved predictions for ${selectedDate}.`
+    );
+
+    renderSelectedDate();
+}
+
+
+async function loadResults(){
+
+    const response =
+        await fetch(
+            "/api/tracking/predictions"
+        );
+
+    if(!response.ok){
+        throw new Error(
+            "Could not load predictions."
+        );
+    }
+
+    allSavedRows =
+        await response.json();
+
+    populateDates();
+
+    renderSelectedDate();
+}
+
+
+loadResults().catch(error => {
+
+    document.getElementById(
+        "summary"
+    ).textContent =
+        "Could not load results: "
+        + error.message;
+
+});
+
+</script>
+
+</body>
+</html>
