@@ -2109,7 +2109,7 @@ function topPickScore(row){
 
         const lineup =
             String(
-                row.pp_line ?? row.lineup_status ||
+                row.lineup_status ||
                 row.confirmed_lineup ||
                 (
                     row.in_starting_lineup === true
@@ -2629,7 +2629,9 @@ function renderTopPicks(rows, title){
                 "UNKNOWN";
 
             const prop =
+                row.pp_prop ||
                 row.prop ||
+                row.stat_type ||
                 row.model_prop ||
                 "";
 
