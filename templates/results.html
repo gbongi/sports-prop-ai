@@ -1,195 +1,457 @@
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
-    <meta charset="UTF-8">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-    <meta
-        name="viewport"
-        content="width=device-width, initial-scale=1.0"
-    >
+<title>Saved Plays | Sports Prop AI</title>
 
-    <title>
-        Sports Prop AI - Saved Results
-    </title>
+<style>
+:root{
+    --bg:#090909;
+    --panel:#121212;
+    --panel2:#181818;
+    --border:#342a1d;
+    --bronze:#80643c;
+    --bronze2:#a08050;
+    --text:#f2f2f2;
+    --muted:#aaa;
+    --green:#67c587;
+    --red:#df7777;
+    --amber:#d5ad65;
+}
 
-    <style>
+*{
+    box-sizing:border-box;
+}
 
-        body{
-            font-family:
-                Arial,
-                Helvetica,
-                sans-serif;
+body{
+    margin:0;
+    background:var(--bg);
+    color:var(--text);
+    font-family:
+        -apple-system,
+        BlinkMacSystemFont,
+        "Segoe UI",
+        sans-serif;
+}
 
-            margin:0;
-            padding:24px;
-            background:#111;
-            color:#eee;
-        }
+.page{
+    max-width:1500px;
+    margin:auto;
+    padding:28px;
+}
 
-        .page{
-            max-width:1500px;
-            margin:auto;
-        }
+.header{
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+    gap:20px;
+    flex-wrap:wrap;
+    margin-bottom:22px;
+}
 
-        a{
-            color:#8ab4ff;
-        }
+h1{
+    margin:0;
+    font-size:30px;
+}
 
-        .controls,
-        .summary{
-            margin:20px 0;
-            padding:16px;
-            border:1px solid #333;
-            border-radius:12px;
-        }
+.subtitle{
+    color:var(--muted);
+    margin-top:6px;
+}
 
-        .controls{
-            display:flex;
-            gap:12px;
-            align-items:center;
-            flex-wrap:wrap;
-        }
+.actions{
+    display:flex;
+    gap:10px;
+    flex-wrap:wrap;
+}
 
-        button,
-        select{
-            padding:9px 12px;
-            cursor:pointer;
-        }
+button,
+select,
+input,
+a.action{
+    background:var(--panel2);
+    color:var(--text);
+    border:1px solid var(--border);
+    border-radius:9px;
+    padding:10px 14px;
+    font-size:14px;
+}
 
-        .delete-date{
-            margin-left:auto;
-        }
+button,
+a.action{
+    cursor:pointer;
+    text-decoration:none;
+}
 
-        .table-wrap{
-            overflow-x:auto;
-        }
+button:hover,
+a.action:hover{
+    border-color:var(--bronze2);
+}
 
-        table{
-            width:100%;
-            border-collapse:collapse;
-            min-width:1400px;
-        }
+.primary{
+    background:#241d13;
+    border-color:var(--bronze);
+}
 
-        th,
-        td{
-            border-bottom:
-                1px solid #333;
+.filters{
+    display:flex;
+    gap:12px;
+    flex-wrap:wrap;
+    align-items:end;
+    background:var(--panel);
+    border:1px solid var(--border);
+    border-radius:14px;
+    padding:16px;
+    margin-bottom:18px;
+}
 
-            padding:10px;
-            text-align:left;
-            white-space:nowrap;
-        }
+.filter label{
+    display:block;
+    color:var(--muted);
+    font-size:12px;
+    margin-bottom:6px;
+}
 
-        th{
-            position:sticky;
-            top:0;
-            background:#1b1b1b;
-        }
+.summary{
+    display:flex;
+    gap:12px;
+    flex-wrap:wrap;
+    margin-bottom:18px;
+}
 
-        .pass{
-            opacity:.65;
-        }
+.stat{
+    min-width:150px;
+    background:var(--panel);
+    border:1px solid var(--border);
+    border-radius:12px;
+    padding:13px 16px;
+}
 
-        .empty{
-            padding:30px;
-            text-align:center;
-            opacity:.75;
-        }
+.stat strong{
+    display:block;
+    font-size:21px;
+    margin-top:3px;
+}
 
-    </style>
+.stat span{
+    color:var(--muted);
+    font-size:12px;
+}
+
+.table-wrap{
+    overflow-x:auto;
+    background:var(--panel);
+    border:1px solid var(--border);
+    border-radius:14px;
+}
+
+table{
+    width:100%;
+    border-collapse:collapse;
+    min-width:1250px;
+}
+
+th{
+    position:sticky;
+    top:0;
+    background:#17130e;
+    color:#d7c29e;
+    text-align:left;
+    font-size:12px;
+    padding:12px;
+    border-bottom:1px solid var(--border);
+    white-space:nowrap;
+}
+
+td{
+    padding:12px;
+    border-bottom:1px solid #252525;
+    vertical-align:top;
+    font-size:13px;
+}
+
+tr:last-child td{
+    border-bottom:none;
+}
+
+.player{
+    font-weight:700;
+    font-size:14px;
+}
+
+.small{
+    color:var(--muted);
+    font-size:11px;
+    margin-top:3px;
+}
+
+.more{
+    color:var(--green);
+    font-weight:800;
+}
+
+.less{
+    color:var(--red);
+    font-weight:800;
+}
+
+.pass{
+    color:var(--amber);
+    font-weight:800;
+}
+
+.delete-btn{
+    padding:6px 9px;
+    border-color:#583333;
+    color:#e3a0a0;
+}
+
+#status{
+    color:var(--muted);
+    margin:10px 0 16px;
+    min-height:20px;
+}
+
+.empty{
+    padding:35px;
+    text-align:center;
+    color:var(--muted);
+}
+
+.print-title{
+    display:none;
+}
+
+@media print{
+    body{
+        background:white !important;
+        color:black !important;
+    }
+
+    .page{
+        max-width:none;
+        padding:0;
+    }
+
+    .no-print,
+    .actions,
+    .filters,
+    #status,
+    .delete-column{
+        display:none !important;
+    }
+
+    .print-title{
+        display:block;
+        margin-bottom:15px;
+    }
+
+    .summary{
+        margin-bottom:12px;
+    }
+
+    .stat,
+    .table-wrap{
+        background:white !important;
+        color:black !important;
+        border:1px solid #bbb !important;
+    }
+
+    .stat span,
+    .small{
+        color:#555 !important;
+    }
+
+    table{
+        min-width:0;
+        font-size:10px;
+    }
+
+    th{
+        position:static;
+        background:#eee !important;
+        color:black !important;
+        border:1px solid #bbb;
+        padding:6px;
+    }
+
+    td{
+        color:black !important;
+        border:1px solid #ccc;
+        padding:6px;
+    }
+
+    .more,
+    .less,
+    .pass{
+        color:black !important;
+    }
+
+    @page{
+        size:landscape;
+        margin:0.35in;
+    }
+}
+</style>
 </head>
 
 <body>
 
 <div class="page">
 
-    <h1>📊 Saved Prediction Results</h1>
+    <div class="print-title">
+        <h2>Sports Prop AI — Saved Plays</h2>
+        <div id="printDate"></div>
+    </div>
 
-    <p>
-        <a href="/">
-            ← Back to Scanner
-        </a>
-    </p>
+    <div class="header no-print">
 
+        <div>
+            <h1>💾 Saved Plays</h1>
+            <div class="subtitle">
+                Saved MLB and WNBA predictions
+            </div>
+        </div>
 
-    <div class="controls">
+        <div class="actions">
+            <a class="action" href="/">
+                ← Scanner
+            </a>
 
-        <label for="dateFilter">
-            Game Date:
-        </label>
+            <button
+                class="primary"
+                onclick="printSavedPlays()"
+            >
+                🖨 Print / Save PDF
+            </button>
 
-        <select
-            id="dateFilter"
-            onchange="renderSelectedDate()"
-        >
-        </select>
+            <button onclick="loadPredictions(true)">
+                ↻ Refresh Saved Data
+            </button>
+        </div>
 
-        <button
-            type="button"
-            onclick="selectToday()"
-        >
-            Today
+    </div>
+
+    <div class="filters no-print">
+
+        <div class="filter">
+            <label>Date</label>
+            <input
+                type="date"
+                id="dateFilter"
+                onchange="render()"
+            >
+        </div>
+
+        <div class="filter">
+            <label>Sport</label>
+            <select
+                id="sportFilter"
+                onchange="render()"
+            >
+                <option value="ALL">MLB + WNBA</option>
+                <option value="MLB">MLB</option>
+                <option value="WNBA">WNBA</option>
+            </select>
+        </div>
+
+        <div class="filter">
+            <label>Decision</label>
+            <select
+                id="decisionFilter"
+                onchange="render()"
+            >
+                <option value="ALL">MORE + LESS + PASS</option>
+                <option value="MORE">MORE</option>
+                <option value="LESS">LESS</option>
+                <option value="PASS">PASS</option>
+            </select>
+        </div>
+
+        <div class="filter">
+            <label>Confidence</label>
+            <select
+                id="confidenceFilter"
+                onchange="render()"
+            >
+                <option value="ALL">All</option>
+                <option value="HIGH">High</option>
+                <option value="MODERATE">Moderate</option>
+                <option value="PASS">Pass</option>
+            </select>
+        </div>
+
+        <button onclick="clearFilters()">
+            Clear Filters
         </button>
 
-        <button
-            type="button"
-            class="delete-date"
-            id="deleteDateButton"
-            onclick="deleteSelectedDate()"
-        >
-            🗑 Delete This Date
+        <button onclick="deleteSelectedDate()">
+            Delete Selected Date
         </button>
 
     </div>
 
+    <div id="status"></div>
 
-    <div
-        id="summary"
-        class="summary"
-    >
-        Loading saved predictions...
+    <div class="summary">
+
+        <div class="stat">
+            <span>Displayed Plays</span>
+            <strong id="countStat">0</strong>
+        </div>
+
+        <div class="stat">
+            <span>MORE</span>
+            <strong id="moreStat">0</strong>
+        </div>
+
+        <div class="stat">
+            <span>LESS</span>
+            <strong id="lessStat">0</strong>
+        </div>
+
+        <div class="stat">
+            <span>Average Probability</span>
+            <strong id="probStat">—</strong>
+        </div>
+
     </div>
-
 
     <div class="table-wrap">
 
         <table>
 
             <thead>
-
                 <tr>
                     <th>Player</th>
+                    <th>Sport</th>
                     <th>Prop</th>
-                    <th>PP Line</th>
+                    <th>Line</th>
                     <th>Projection</th>
-
-                    <th>Model</th>
-                    <th>Model %</th>
+                    <th>Pick</th>
+                    <th>Probability</th>
                     <th>Confidence</th>
-
                     <th>Market</th>
-                    <th>Market %</th>
-                    <th>Books</th>
-                    <th>Strength</th>
-
-                    <th>Market Check</th>
-
-                    <th>Final</th>
-                    <th>Status</th>
-
+                    <th>Game</th>
+                    <th>Readiness</th>
                     <th>Actual</th>
-                    <th>Result</th>
-
-                    <th>Delete</th>
+                    <th class="delete-column">Delete</th>
                 </tr>
-
             </thead>
 
-            <tbody id="resultsBody">
-            </tbody>
+            <tbody id="resultsBody"></tbody>
 
         </table>
+
+        <div
+            id="emptyState"
+            class="empty"
+            style="display:none;"
+        >
+            No saved plays found.
+        </div>
 
     </div>
 
@@ -197,69 +459,414 @@
 
 
 <script>
+const STORAGE_KEY =
+    "sportsPropSavedPlaysV1";
 
-let allSavedRows = [];
+let allRows = [];
 
 
-function localToday(){
+function numberValue(value){
 
-    const now = new Date();
+    const n = Number(value);
 
-    const year =
-        now.getFullYear();
+    return Number.isFinite(n)
+        ? n
+        : null;
+}
 
-    const month =
+
+function probabilityValue(row){
+
+    const lean =
         String(
-            now.getMonth() + 1
-        ).padStart(2, "0");
+            row.final_lean ||
+            row.raw_lean ||
+            ""
+        ).toUpperCase();
 
-    const day =
-        String(
-            now.getDate()
-        ).padStart(2, "0");
+    if(lean === "MORE"){
+        return numberValue(row.p_more);
+    }
 
-    return `${year}-${month}-${day}`;
+    if(lean === "LESS"){
+        return numberValue(row.p_less);
+    }
+
+    return numberValue(
+        row.strongest_probability
+    );
+}
+
+
+function percent(value){
+
+    const n = numberValue(value);
+
+    if(n === null){
+        return "—";
+    }
+
+    return (
+        (n <= 1 ? n * 100 : n)
+        .toFixed(1)
+        + "%"
+    );
+}
+
+
+function num(value, digits=2){
+
+    const n = numberValue(value);
+
+    if(n === null){
+        return "—";
+    }
+
+    return n.toFixed(digits);
 }
 
 
 function gameDate(row){
 
-    const value =
-        row.game_start_time || "";
+    const raw =
+        row.game_start_time ||
+        "";
 
-    if(value.length >= 10){
-        return value.slice(0, 10);
+    if(!raw){
+        return "";
     }
 
-    return "UNKNOWN";
+    try{
+
+        const d = new Date(raw);
+
+        if(!Number.isNaN(d.getTime())){
+
+            const parts =
+                new Intl.DateTimeFormat(
+                    "en-US",
+                    {
+                        timeZone:
+                            "America/New_York",
+                        year:"numeric",
+                        month:"2-digit",
+                        day:"2-digit"
+                    }
+                ).formatToParts(d);
+
+            const map = {};
+
+            parts.forEach(
+                part => {
+                    map[part.type] =
+                        part.value;
+                }
+            );
+
+            return (
+                map.year
+                + "-"
+                + map.month
+                + "-"
+                + map.day
+            );
+        }
+
+    }catch(e){}
+
+    return String(raw).slice(0,10);
 }
 
 
-function pct(value){
+function gameTime(row){
 
-    if(
-        value === null ||
-        value === undefined
-    ){
+    const raw =
+        row.game_start_time;
+
+    if(!raw){
         return "—";
     }
 
-    return (
-        Number(value) * 100
-    ).toFixed(1) + "%";
+    try{
+
+        return new Date(raw)
+            .toLocaleString(
+                "en-US",
+                {
+                    timeZone:
+                        "America/New_York",
+                    month:"short",
+                    day:"numeric",
+                    hour:"numeric",
+                    minute:"2-digit"
+                }
+            );
+
+    }catch(e){
+        return String(raw);
+    }
 }
 
 
-function number(value){
+function rowKey(row){
 
-    if(
-        value === null ||
-        value === undefined
-    ){
-        return "—";
+    if(row.projection_id){
+        return (
+            String(row.sport || "")
+            + "|"
+            + String(row.projection_id)
+        );
     }
 
-    return Number(value).toFixed(2);
+    return [
+        row.sport || "",
+        row.game_id || "",
+        row.player || "",
+        row.pp_prop || "",
+        row.pp_line ?? ""
+    ].join("|");
+}
+
+
+function dedupeRows(rows){
+
+    const map =
+        new Map();
+
+    rows.forEach(row => {
+
+        if(!row){
+            return;
+        }
+
+        const key =
+            rowKey(row);
+
+        const old =
+            map.get(key);
+
+        if(
+            !old ||
+            (!old.id && row.id)
+        ){
+            map.set(
+                key,
+                row
+            );
+        }
+    });
+
+    return Array.from(
+        map.values()
+    );
+}
+
+
+function loadBrowserBackup(){
+
+    try{
+
+        const raw =
+            localStorage.getItem(
+                STORAGE_KEY
+            );
+
+        if(!raw){
+            return [];
+        }
+
+        const rows =
+            JSON.parse(raw);
+
+        return Array.isArray(rows)
+            ? rows
+            : [];
+
+    }catch(e){
+
+        return [];
+    }
+}
+
+
+function saveBrowserBackup(rows){
+
+    try{
+
+        localStorage.setItem(
+            STORAGE_KEY,
+            JSON.stringify(
+                dedupeRows(rows)
+            )
+        );
+
+    }catch(e){
+
+        console.warn(
+            "Could not save browser backup",
+            e
+        );
+    }
+}
+
+
+async function loadPredictions(force=false){
+
+    const status =
+        document.getElementById(
+            "status"
+        );
+
+    const cached =
+        loadBrowserBackup();
+
+    if(cached.length){
+        allRows =
+            dedupeRows(cached);
+
+        render();
+
+        status.textContent =
+            "Loaded browser backup while checking server...";
+    }
+
+    try{
+
+        const response =
+            await fetch(
+                "/api/tracking/predictions",
+                {
+                    cache:"no-store"
+                }
+            );
+
+        if(!response.ok){
+            throw new Error(
+                "Server returned "
+                + response.status
+            );
+        }
+
+        const serverRows =
+            await response.json();
+
+        const rows =
+            Array.isArray(serverRows)
+            ? serverRows
+            : [];
+
+        allRows =
+            dedupeRows([
+                ...rows,
+                ...cached
+            ]);
+
+        saveBrowserBackup(
+            allRows
+        );
+
+        render();
+
+        if(rows.length){
+            status.textContent =
+                "Saved plays restored from server. Browser backup updated.";
+        }
+        else if(allRows.length){
+            status.textContent =
+                "Server copy was empty. Restored saved plays from this browser.";
+        }
+        else{
+            status.textContent =
+                "No saved plays yet.";
+        }
+
+    }catch(error){
+
+        allRows =
+            dedupeRows(cached);
+
+        render();
+
+        status.textContent =
+            allRows.length
+            ? "Server unavailable. Showing browser backup."
+            : "Could not load saved plays: "
+              + error.message;
+    }
+}
+
+
+function filteredRows(){
+
+    const selectedDate =
+        document.getElementById(
+            "dateFilter"
+        ).value;
+
+    const sport =
+        document.getElementById(
+            "sportFilter"
+        ).value;
+
+    const decision =
+        document.getElementById(
+            "decisionFilter"
+        ).value;
+
+    const confidence =
+        document.getElementById(
+            "confidenceFilter"
+        ).value;
+
+    return allRows.filter(row => {
+
+        if(
+            selectedDate &&
+            gameDate(row)
+            !== selectedDate
+        ){
+            return false;
+        }
+
+        if(
+            sport !== "ALL" &&
+            String(row.sport || "")
+                .toUpperCase()
+                !== sport
+        ){
+            return false;
+        }
+
+        const pick =
+            String(
+                row.final_lean ||
+                row.raw_lean ||
+                "PASS"
+            ).toUpperCase();
+
+        if(
+            decision !== "ALL" &&
+            pick !== decision
+        ){
+            return false;
+        }
+
+        const conf =
+            String(
+                row.final_confidence ||
+                row.raw_confidence ||
+                ""
+            ).toUpperCase();
+
+        if(
+            confidence !== "ALL" &&
+            conf !== confidence
+        ){
+            return false;
+        }
+
+        return true;
+    });
 }
 
 
@@ -268,398 +875,379 @@ function escapeHtml(value){
     return String(
         value ?? ""
     )
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
+    .replaceAll("&","&amp;")
+    .replaceAll("<","&lt;")
+    .replaceAll(">","&gt;")
+    .replaceAll('"',"&quot;")
+    .replaceAll("'","&#039;");
 }
 
 
-function populateDates(){
+function render(){
 
-    const select =
-        document.getElementById(
-            "dateFilter"
-        );
-
-    const dates = [
-        ...new Set(
-            allSavedRows.map(gameDate)
-        )
-    ]
-    .filter(
-        value => value !== "UNKNOWN"
-    )
-    .sort()
-    .reverse();
-
-    const today =
-        localToday();
-
-    select.innerHTML = "";
-
-    // Always show Today, even if
-    // nothing has been saved yet.
-    const todayOption =
-        new Option(
-            `${today} — Today`,
-            today
-        );
-
-    select.add(todayOption);
-
-    for(const date of dates){
-
-        if(date === today){
-            continue;
-        }
-
-        select.add(
-            new Option(
-                date,
-                date
-            )
-        );
-    }
-
-    select.value = today;
-}
-
-
-function selectToday(){
-
-    const select =
-        document.getElementById(
-            "dateFilter"
-        );
-
-    select.value =
-        localToday();
-
-    renderSelectedDate();
-}
-
-
-function renderSelectedDate(){
-
-    const selectedDate =
-        document.getElementById(
-            "dateFilter"
-        ).value;
-
-    const rows =
-        allSavedRows.filter(
-            row =>
-                gameDate(row)
-                === selectedDate
-        );
-
-    const body =
+    const tbody =
         document.getElementById(
             "resultsBody"
         );
 
-    const summary =
+    const empty =
         document.getElementById(
-            "summary"
+            "emptyState"
         );
 
-    const deleteDateButton =
-        document.getElementById(
-            "deleteDateButton"
-        );
+    const rows =
+        filteredRows();
 
-    summary.innerHTML =
-        "<strong>"
-        + rows.length
-        + "</strong> saved prediction"
-        + (rows.length === 1 ? "" : "s")
-        + " for <strong>"
-        + escapeHtml(selectedDate)
-        + "</strong>";
+    tbody.innerHTML = "";
 
-    deleteDateButton.disabled =
-        rows.length === 0;
+    empty.style.display =
+        rows.length
+        ? "none"
+        : "block";
 
-    body.innerHTML = "";
+    let moreCount = 0;
+    let lessCount = 0;
+    let probabilityTotal = 0;
+    let probabilityCount = 0;
 
-    if(rows.length === 0){
+    rows.forEach(row => {
+
+        const pick =
+            String(
+                row.final_lean ||
+                row.raw_lean ||
+                "PASS"
+            ).toUpperCase();
+
+        if(pick === "MORE"){
+            moreCount++;
+        }
+
+        if(pick === "LESS"){
+            lessCount++;
+        }
+
+        const probability =
+            probabilityValue(row);
+
+        if(probability !== null){
+            probabilityTotal +=
+                probability <= 1
+                ? probability
+                : probability / 100;
+
+            probabilityCount++;
+        }
+
+        const pickClass =
+            pick === "MORE"
+            ? "more"
+            : (
+                pick === "LESS"
+                ? "less"
+                : "pass"
+            );
+
+        const market =
+            row.market_agreement === 1
+            ? "AGREES"
+            : (
+                row.market_available
+                ? (
+                    row.market_lean ||
+                    row.market_check ||
+                    "CHECKED"
+                )
+                : "—"
+            );
+
+        const readiness =
+            row.final_pick
+            ? "VERIFIED"
+            : (
+                row.scanner_status ||
+                row.scan_stage ||
+                "—"
+            );
+
+        const actual =
+            row.actual_result
+            ? (
+                row.actual_result
+                + (
+                    row.actual_value !== null &&
+                    row.actual_value !== undefined
+                    ? " · "
+                      + row.actual_value
+                    : ""
+                )
+            )
+            : "—";
 
         const tr =
-            document.createElement("tr");
-
-        tr.innerHTML = `
-            <td
-                colspan="17"
-                class="empty"
-            >
-                No saved predictions
-                for this date.
-            </td>
-        `;
-
-        body.appendChild(tr);
-
-        return;
-    }
-
-
-    for(const row of rows){
-
-        const tr =
-            document.createElement("tr");
-
-        const finalLean =
-            row.final_lean || "PASS";
-
-        tr.className =
-            finalLean.toLowerCase();
+            document.createElement(
+                "tr"
+            );
 
         tr.innerHTML = `
             <td>
-                <strong>
-                    ${escapeHtml(row.player)}
-                </strong>
+                <div class="player">
+                    ${escapeHtml(row.player || "—")}
+                </div>
+                <div class="small">
+                    ${escapeHtml(row.team || "")}
+                    ${row.opponent ? " vs " + escapeHtml(row.opponent) : ""}
+                </div>
             </td>
 
             <td>
-                ${escapeHtml(row.pp_prop)}
+                ${escapeHtml(row.sport || "—")}
             </td>
 
             <td>
-                ${escapeHtml(row.pp_line)}
+                ${escapeHtml(row.pp_prop || row.model_prop || "—")}
             </td>
 
             <td>
-                ${number(row.projection)}
+                ${escapeHtml(row.pp_line ?? "—")}
             </td>
 
             <td>
-                ${escapeHtml(
-                    row.raw_lean || "—"
-                )}
+                ${num(row.projection)}
+            </td>
+
+            <td class="${pickClass}">
+                ${escapeHtml(pick)}
             </td>
 
             <td>
-                ${pct(
-                    row.strongest_probability
-                )}
-            </td>
-
-            <td>
-                ${escapeHtml(
-                    row.raw_confidence || "—"
-                )}
-            </td>
-
-            <td>
-                ${escapeHtml(
-                    row.market_lean || "—"
-                )}
-            </td>
-
-            <td>
-                ${pct(
-                    row.market_probability
-                )}
+                ${percent(probability)}
             </td>
 
             <td>
                 ${escapeHtml(
-                    row.market_books ?? "—"
+                    row.final_confidence ||
+                    row.raw_confidence ||
+                    "—"
                 )}
             </td>
 
             <td>
-                ${escapeHtml(
-                    row.market_strength || "—"
-                )}
+                ${escapeHtml(market)}
+                ${
+                    row.market_books
+                    ? `<div class="small">${escapeHtml(row.market_books)} books</div>`
+                    : ""
+                }
             </td>
 
             <td>
-                ${escapeHtml(
-                    row.market_check || "—"
-                )}
+                ${escapeHtml(gameTime(row))}
             </td>
 
             <td>
-                <strong>
-                    ${escapeHtml(finalLean)}
-                </strong>
+                ${escapeHtml(readiness)}
             </td>
 
             <td>
-                ${escapeHtml(
-                    row.scanner_status || "—"
-                )}
+                ${escapeHtml(actual)}
             </td>
 
-            <td>
-                ${number(row.actual_value)}
-            </td>
-
-            <td>
-                ${escapeHtml(
-                    row.actual_result ||
-                    "PENDING"
-                )}
-            </td>
-
-            <td>
+            <td class="delete-column">
                 <button
-                    type="button"
-                    onclick="deletePrediction(
-                        ${Number(row.id)}
-                    )"
+                    class="delete-btn"
+                    onclick='deleteRow(${JSON.stringify(rowKey(row))}, ${row.id ? Number(row.id) : "null"})'
                 >
-                    🗑
+                    Delete
                 </button>
             </td>
         `;
 
-        body.appendChild(tr);
-    }
+        tbody.appendChild(tr);
+    });
+
+    document.getElementById(
+        "countStat"
+    ).textContent =
+        rows.length;
+
+    document.getElementById(
+        "moreStat"
+    ).textContent =
+        moreCount;
+
+    document.getElementById(
+        "lessStat"
+    ).textContent =
+        lessCount;
+
+    document.getElementById(
+        "probStat"
+    ).textContent =
+        probabilityCount
+        ? (
+            (
+                probabilityTotal /
+                probabilityCount
+            ) * 100
+        ).toFixed(1) + "%"
+        : "—";
 }
 
 
-async function deletePrediction(id){
+async function deleteRow(key, id){
 
     if(
         !confirm(
-            "Delete this saved prediction?"
+            "Delete this saved play?"
         )
     ){
         return;
     }
 
-    const response =
-        await fetch(
-            `/api/tracking/predictions/${id}`,
-            {
-                method: "DELETE"
+    if(id){
+
+        try{
+
+            const response =
+                await fetch(
+                    "/api/tracking/predictions/"
+                    + id,
+                    {
+                        method:"DELETE"
+                    }
+                );
+
+            if(!response.ok){
+                throw new Error(
+                    "Server delete failed"
+                );
             }
-        );
 
-    const data =
-        await response.json();
+        }catch(error){
 
-    if(!response.ok){
-        alert(
-            data.error ||
-            "Delete failed."
-        );
-        return;
+            document.getElementById(
+                "status"
+            ).textContent =
+                "Server delete warning: "
+                + error.message
+                + ". Browser copy will still be removed.";
+        }
     }
 
-    allSavedRows =
-        allSavedRows.filter(
+    allRows =
+        allRows.filter(
             row =>
-                Number(row.id)
-                !== Number(id)
+                rowKey(row) !== key
         );
 
-    renderSelectedDate();
+    saveBrowserBackup(
+        allRows
+    );
+
+    render();
 }
 
 
 async function deleteSelectedDate(){
 
-    const select =
+    const d =
         document.getElementById(
             "dateFilter"
+        ).value;
+
+    if(!d){
+
+        alert(
+            "Select a date first."
         );
 
-    const selectedDate =
-        select.value;
-
-    const count =
-        allSavedRows.filter(
-            row =>
-                gameDate(row)
-                === selectedDate
-        ).length;
-
-    if(count === 0){
         return;
     }
 
     if(
         !confirm(
-            `Delete all ${count} saved predictions for ${selectedDate}?\n\nThis cannot be undone.`
+            "Delete all saved plays for "
+            + d
+            + "?"
         )
     ){
         return;
     }
 
-    const response =
+    try{
+
         await fetch(
-            `/api/tracking/date/${selectedDate}`,
+            "/api/tracking/date/"
+            + encodeURIComponent(d),
             {
-                method: "DELETE"
+                method:"DELETE"
             }
         );
 
-    const data =
-        await response.json();
+    }catch(error){}
 
-    if(!response.ok){
-        alert(
-            data.error ||
-            "Delete failed."
-        );
-        return;
-    }
-
-    allSavedRows =
-        allSavedRows.filter(
+    allRows =
+        allRows.filter(
             row =>
-                gameDate(row)
-                !== selectedDate
+                gameDate(row) !== d
         );
 
-    populateDates();
-
-    alert(
-        `Deleted ${data.deleted} saved predictions for ${selectedDate}.`
+    saveBrowserBackup(
+        allRows
     );
 
-    renderSelectedDate();
-}
-
-
-async function loadResults(){
-
-    const response =
-        await fetch(
-            "/api/tracking/predictions"
-        );
-
-    if(!response.ok){
-        throw new Error(
-            "Could not load predictions."
-        );
-    }
-
-    allSavedRows =
-        await response.json();
-
-    populateDates();
-
-    renderSelectedDate();
-}
-
-
-loadResults().catch(error => {
+    render();
 
     document.getElementById(
-        "summary"
+        "status"
     ).textContent =
-        "Could not load results: "
-        + error.message;
+        "Deleted saved plays for "
+        + d
+        + ".";
+}
 
-});
 
+function clearFilters(){
+
+    document.getElementById(
+        "dateFilter"
+    ).value = "";
+
+    document.getElementById(
+        "sportFilter"
+    ).value = "ALL";
+
+    document.getElementById(
+        "decisionFilter"
+    ).value = "ALL";
+
+    document.getElementById(
+        "confidenceFilter"
+    ).value = "ALL";
+
+    render();
+}
+
+
+function printSavedPlays(){
+
+    document.getElementById(
+        "printDate"
+    ).textContent =
+        "Printed "
+        + new Date().toLocaleString();
+
+    window.print();
+}
+
+
+document.addEventListener(
+    "DOMContentLoaded",
+    () => {
+        loadPredictions();
+    }
+);
 </script>
 
 </body>
