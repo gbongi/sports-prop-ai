@@ -1796,6 +1796,480 @@ document.addEventListener("DOMContentLoaded", function(){
 
 </script>
 
+
+<!-- TOP PICKS CACHE PERSISTENCE V2 -->
+<script>
+(function(){
+
+    const STORAGE_KEY =
+        "sportsPropScannerCacheV2";
+
+    window.scannerSportCache =
+        window.scannerSportCache || {};
+
+    function easternDate(value){
+
+        if(!value){
+            return null;
+        }
+
+        try{
+            const d = new Date(value);
+
+            if(Number.isNaN(d.getTime())){
+                return null;
+            }
+
+            const parts =
+                new Intl.DateTimeFormat(
+                    "en-US",
+                    {
+                        timeZone:
+                            "America/New_York",
+                        year:"numeric",
+                        month:"2-digit",
+                        day:"2-digit"
+                    }
+                ).formatToParts(d);
+
+            const map = {};
+
+            parts.forEach(
+                part => {
+                    map[part.type] =
+                        part.value;
+                }
+            );
+
+            return (
+                map.year
+                + "-"
+                + map.month
+                + "-"
+                + map.day
+            );
+
+        }catch(e){
+            return null;
+        }
+    }
+
+
+    function todayEastern(){
+
+        return easternDate(
+            new Date()
+        );
+    }
+
+
+    function scanDate(scan){
+
+        if(!scan){
+            return null;
+        }
+
+        if(scan.scan_date){
+            return String(
+                scan.scan_date
+            ).slice(0,10);
+        }
+
+        if(scan.scanned_at){
+            const d =
+                easternDate(
+                    scan.scanned_at
+                );
+
+            if(d){
+                return d;
+            }
+        }
+
+        if(
+            Array.isArray(scan.results) &&
+            scan.results.length
+        ){
+            const row =
+                scan.results.find(
+                    r =>
+                        r.start_time ||
+                        r.game_start_time
+                );
+
+            if(row){
+
+                return easternDate(
+                    row.start_time ||
+                    row.game_start_time
+                );
+            }
+        }
+
+        return null;
+    }
+
+
+    function saveCache(){
+
+        try{
+
+            localStorage.setItem(
+                STORAGE_KEY,
+                JSON.stringify({
+                    saved_at:
+                        new Date()
+                        .toISOString(),
+
+                    cache:
+                        window.scannerSportCache
+                })
+            );
+
+        }catch(e){
+
+            console.warn(
+                "Scanner cache save failed",
+                e
+            );
+        }
+    }
+
+
+    function rememberScan(
+        scan,
+        forceFresh=false
+    ){
+
+        if(
+            !scan ||
+            !Array.isArray(scan.results)
+        ){
+            return false;
+        }
+
+        const sport =
+            String(
+                scan.sport || ""
+            ).toUpperCase();
+
+        if(
+            sport !== "MLB" &&
+            sport !== "WNBA"
+        ){
+            return false;
+        }
+
+        const d =
+            scanDate(scan);
+
+        if(
+            !forceFresh &&
+            d &&
+            d !== todayEastern()
+        ){
+            return false;
+        }
+
+        window.scannerSportCache[sport] =
+            scan;
+
+        if(
+            sport === "MLB"
+        ){
+            window.currentMLBScannerData =
+                scan;
+        }
+
+        window.currentScannerData =
+            scan;
+
+        saveCache();
+
+        console.log(
+            "[Top Picks] cached",
+            sport,
+            scan.results.length,
+            "rows"
+        );
+
+        return true;
+    }
+
+
+    function restoreLocalCache(){
+
+        try{
+
+            const raw =
+                localStorage.getItem(
+                    STORAGE_KEY
+                );
+
+            if(!raw){
+                return 0;
+            }
+
+            const saved =
+                JSON.parse(raw);
+
+            const cache =
+                saved &&
+                saved.cache
+                    ? saved.cache
+                    : {};
+
+            let restored = 0;
+
+            ["MLB","WNBA"]
+            .forEach(sport => {
+
+                const scan =
+                    cache[sport];
+
+                if(
+                    scan &&
+                    Array.isArray(
+                        scan.results
+                    )
+                ){
+                    const d =
+                        scanDate(scan);
+
+                    if(
+                        !d ||
+                        d === todayEastern()
+                    ){
+                        window
+                        .scannerSportCache[
+                            sport
+                        ] = scan;
+
+                        restored++;
+                    }
+                }
+            });
+
+            if(restored){
+
+                console.log(
+                    "[Top Picks] restored",
+                    restored,
+                    "sport scan(s) from browser"
+                );
+            }
+
+            return restored;
+
+        }catch(e){
+
+            console.warn(
+                "Scanner cache restore failed",
+                e
+            );
+
+            return 0;
+        }
+    }
+
+
+    function walkSnapshot(
+        value,
+        depth=0
+    ){
+
+        if(
+            value === null ||
+            value === undefined ||
+            depth > 4
+        ){
+            return;
+        }
+
+        if(
+            typeof value === "string"
+        ){
+
+            try{
+                walkSnapshot(
+                    JSON.parse(value),
+                    depth + 1
+                );
+            }catch(e){}
+
+            return;
+        }
+
+        if(
+            Array.isArray(value)
+        ){
+
+            value.forEach(
+                item =>
+                    walkSnapshot(
+                        item,
+                        depth + 1
+                    )
+            );
+
+            return;
+        }
+
+        if(
+            typeof value !== "object"
+        ){
+            return;
+        }
+
+        if(
+            value.sport &&
+            Array.isArray(
+                value.results
+            )
+        ){
+            rememberScan(
+                value,
+                false
+            );
+
+            return;
+        }
+
+        if(
+            value.payload
+        ){
+            walkSnapshot(
+                value.payload,
+                depth + 1
+            );
+        }
+
+        Object.values(value)
+        .forEach(child => {
+
+            if(
+                child !==
+                value.payload
+            ){
+                walkSnapshot(
+                    child,
+                    depth + 1
+                );
+            }
+        });
+    }
+
+
+    restoreLocalCache();
+
+
+    const originalFetch =
+        window.fetch.bind(window);
+
+    window.fetch =
+        async function(...args){
+
+            const response =
+                await originalFetch(
+                    ...args
+                );
+
+            try{
+
+                const raw =
+                    args[0];
+
+                const url =
+                    String(
+                        raw &&
+                        raw.url
+                            ? raw.url
+                            : raw || ""
+                    );
+
+                if(
+                    url.includes(
+                        "/api/mlb/prizepicks-scanner"
+                    ) ||
+                    url.includes(
+                        "/api/wnba/prizepicks-scanner"
+                    )
+                ){
+
+                    response
+                    .clone()
+                    .json()
+                    .then(data => {
+
+                        rememberScan(
+                            data,
+                            true
+                        );
+
+                    })
+                    .catch(() => {});
+                }
+
+            }catch(e){}
+
+            return response;
+        };
+
+
+    window.addEventListener(
+        "load",
+        async () => {
+
+            try{
+
+                const response =
+                    await originalFetch(
+                        "/api/scanner/latest",
+                        {
+                            cache:
+                                "no-store"
+                        }
+                    );
+
+                if(response.ok){
+
+                    const data =
+                        await response.json();
+
+                    walkSnapshot(
+                        data
+                    );
+                }
+
+            }catch(e){
+
+                // Endpoint may not exist on
+                // an older deployment.
+                // Browser cache still works.
+            }
+
+
+            console.log(
+                "[Top Picks] MLB cache:",
+                window.scannerSportCache.MLB
+                    ? window.scannerSportCache.MLB.results.length
+                    : 0,
+                "WNBA cache:",
+                window.scannerSportCache.WNBA
+                    ? window.scannerSportCache.WNBA.results.length
+                    : 0
+            );
+        }
+    );
+
+
+    window.restoreTopPickScannerCache =
+        restoreLocalCache;
+
+})();
+</script>
+<!-- END TOP PICKS CACHE PERSISTENCE V2 -->
+
 </body>
 </html>
 
@@ -2365,7 +2839,7 @@ function getSportTopPicks(sport){
         String(sport || "").toUpperCase();
 
     const scan =
-        window.scannerSportCache[sport];
+        (window.scannerSportCache || {})[sport];
 
     if(
         !scan ||
@@ -2886,7 +3360,7 @@ function showFullScannerBoard(){
     }
 
     const scan =
-        window.scannerSportCache[sport];
+        (window.scannerSportCache || {})[sport];
 
     if(scan){
         results.innerHTML = `
@@ -3109,7 +3583,7 @@ function registerScannerSnapshot(
         return;
     }
 
-    window.scannerSportCache[sport] =
+    (window.scannerSportCache || {})[sport] =
         data;
 
     const scannedAt =
