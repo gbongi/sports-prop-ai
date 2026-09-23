@@ -542,11 +542,17 @@ def mlb_prop_probability(
     values,
 ):
     """
-    Conservative, distribution-aware MLB probability calibration.
+    Conservative MORE/LESS probability engine.
 
-    Uses historical line-clearing rates, observed volatility,
-    projection evidence, sample-size shrinkage, disagreement
-    penalties, and conservative probability caps.
+    Primary evidence:
+    - historical line-clearing rates
+    - multi-window agreement
+    - observed volatility
+    - projection distance from line
+    - sample-size reliability
+
+    This intentionally penalizes volatile fantasy-score props
+    and disagreement between recent/long-term evidence.
     """
 
     if not values:
@@ -557,6 +563,7 @@ def mlb_prop_probability(
     projection = float(projection)
 
     clean = []
+
     for value in values:
         try:
             clean.append(float(value))
@@ -566,39 +573,75 @@ def mlb_prop_probability(
     if not clean:
         return 0.50
 
+    def smoothed_more_rate(sample, prior_strength=10.0):
+        if not sample:
+            return 0.50
+
+        overs = sum(
+            1 for value in sample
+            if value > line
+        )
+
+        n = len(sample)
+
+        return (
+            overs + 0.50 * prior_strength
+        ) / (
+            n + prior_strength
+        )
+
     recent20 = clean[-20:]
     recent10 = clean[-10:]
     recent5 = clean[-5:]
 
-    season_rate = empirical_more_rate(clean, line)
-    l20_rate = empirical_more_rate(recent20, line)
-    l10_rate = empirical_more_rate(recent10, line)
-    l5_rate = empirical_more_rate(recent5, line)
+    season_rate = smoothed_more_rate(
+        clean,
+        12.0,
+    )
 
-    # L5 is deliberately small so a short streak cannot dominate.
+    l20_rate = smoothed_more_rate(
+        recent20,
+        10.0,
+    )
+
+    l10_rate = smoothed_more_rate(
+        recent10,
+        8.0,
+    )
+
+    l5_rate = smoothed_more_rate(
+        recent5,
+        6.0,
+    )
+
     empirical = (
-        0.45 * season_rate
+        0.50 * season_rate
         + 0.30 * l20_rate
-        + 0.20 * l10_rate
+        + 0.15 * l10_rate
         + 0.05 * l5_rate
     )
 
-    volatility_sample = recent20 if len(recent20) >= 10 else clean
+    volatility_sample = (
+        recent20
+        if len(recent20) >= 10
+        else clean
+    )
 
     if len(volatility_sample) >= 2:
-        sigma = statistics.stdev(volatility_sample)
+        sigma = statistics.stdev(
+            volatility_sample
+        )
     else:
         sigma = 0.0
 
-    # Conservative volatility floors by prop type.
     sigma_floors = {
         "hits": 0.75,
-        "total_bases": 1.60,
-        "runs": 0.65,
-        "rbi": 0.80,
-        "walks": 0.55,
-        "home_runs": 0.35,
-        "hitter_fantasy_score": 7.50,
+        "total_bases": 1.75,
+        "runs": 0.70,
+        "rbi": 0.85,
+        "walks": 0.60,
+        "home_runs": 0.40,
+        "hitter_fantasy_score": 8.50,
         "strikeouts": 2.00,
         "pitching_outs": 3.25,
         "hits_allowed": 1.75,
@@ -611,7 +654,10 @@ def mlb_prop_probability(
         sigma,
         sigma_floors.get(
             prop,
-            max(abs(projection) * 0.30, 1.0),
+            max(
+                abs(projection) * 0.30,
+                1.0,
+            ),
         ),
     )
 
@@ -627,12 +673,16 @@ def mlb_prop_probability(
     }
 
     if prop in fantasy_props:
-        # Fantasy score is volatile: actual game outcomes dominate.
+
+        # Fantasy score is high variance.
+        # Historical line outcomes dominate.
         raw_prob = (
-            0.75 * empirical
-            + 0.25 * distribution_prob
+            0.80 * empirical
+            + 0.20 * distribution_prob
         )
+
     else:
+
         poisson_prob = count_prob_more(
             line,
             max(projection, 0.01),
@@ -644,30 +694,95 @@ def mlb_prop_probability(
             + 0.15 * poisson_prob
         )
 
-    # Shrink toward 50%; even a full season is not perfect information.
     sample_size = len(clean)
+
     reliability = min(
-        0.88,
-        sample_size / 70.0,
+        0.82,
+        0.35 + sample_size / 120.0,
     )
 
     calibrated = (
         0.50
-        + (raw_prob - 0.50) * reliability
+        + (raw_prob - 0.50)
+        * reliability
     )
 
-    # Penalize confidence when projection and empirical history disagree.
-    if (distribution_prob >= 0.50) != (empirical >= 0.50):
+    window_rates = [
+        season_rate,
+        l20_rate,
+        l10_rate,
+        l5_rate,
+    ]
+
+    disagreement = (
+        max(window_rates)
+        - min(window_rates)
+    )
+
+    # Big Season/L20/L10/L5 disagreement = trap risk.
+    if disagreement >= 0.40:
         calibrated = (
             0.50
-            + (calibrated - 0.50) * 0.70
+            + (calibrated - 0.50)
+            * 0.60
         )
 
-    # Prevent public-game-log models from advertising fake certainty.
-    if prop in fantasy_props:
+    elif disagreement >= 0.25:
+        calibrated = (
+            0.50
+            + (calibrated - 0.50)
+            * 0.80
+        )
+
+    # Projection and actual historical clearing rate disagree.
+    if (
+        (distribution_prob >= 0.50)
+        !=
+        (empirical >= 0.50)
+    ):
+        calibrated = (
+            0.50
+            + (calibrated - 0.50)
+            * 0.65
+        )
+
+    # Extra HFS volatility/trap protection.
+    if prop == "hitter_fantasy_score":
+
+        edge = abs(
+            projection - line
+        )
+
+        signal_to_noise = (
+            edge / sigma
+            if sigma > 0
+            else 0.0
+        )
+
+        if signal_to_noise < 0.40:
+            calibrated = (
+                0.50
+                + (calibrated - 0.50)
+                * 0.72
+            )
+
+        elif signal_to_noise < 0.70:
+            calibrated = (
+                0.50
+                + (calibrated - 0.50)
+                * 0.88
+            )
+
+        lower_cap = 0.32
+        upper_cap = 0.68
+
+    elif prop == "pitcher_fantasy_score":
+
         lower_cap = 0.30
         upper_cap = 0.70
+
     else:
+
         lower_cap = 0.27
         upper_cap = 0.73
 
@@ -678,11 +793,6 @@ def mlb_prop_probability(
             calibrated,
         ),
     )
-
-
-# ============================================================
-# RECENT FORM
-# ============================================================
 
 def recent_context(values):
     season = statistics.mean(

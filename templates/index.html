@@ -2086,13 +2086,13 @@ function topPickScore(row){
     }
 
     // --------------------------------------------------------
-    // INDEPENDENT MARKET — - / + 10
+    // INDEPENDENT MARKET — secondary confirmation only
     // --------------------------------------------------------
 
     if(market === 1){
-        score += 10;
+        score += 3;
         reasons.push(
-            "independent market agrees"
+            "independent market confirms model"
         );
     }
     else{
