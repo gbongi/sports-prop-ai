@@ -2195,6 +2195,21 @@ def api_tracking_save():
                 skipped += 1
                 continue
 
+            # Saved Results should contain actionable plays only.
+            # Never store PASS / non-qualifying scanner rows.
+            decision = str(
+                row.get("lean")
+                or row.get("final_lean")
+                or ""
+            ).upper().strip()
+
+            if (
+                decision not in ("MORE", "LESS")
+                or row.get("qualifies") is not True
+            ):
+                skipped += 1
+                continue
+
             player = row.get("player")
             pp_prop = row.get("pp_prop")
             pp_line = row.get("pp_line")

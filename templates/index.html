@@ -1505,8 +1505,31 @@ async function saveMLBScannerResults(){
                         "application/json"
                 },
                 body: JSON.stringify({
-                    sport: scan.sport || (document.getElementById("scannerSport")?.value || "MLB"),
-                    results: scan.results
+                    sport:
+                        scan.sport ||
+                        (
+                            document.getElementById(
+                                "scannerSport"
+                            )?.value || "MLB"
+                        ),
+
+                    // Saved Results = actionable plays only.
+                    // PASS rows stay on the scanner but are never saved.
+                    results: scan.results.filter(row => {
+                        const decision = String(
+                            row.lean ||
+                            row.final_lean ||
+                            ""
+                        ).toUpperCase();
+
+                        return (
+                            row.qualifies === true &&
+                            (
+                                decision === "MORE" ||
+                                decision === "LESS"
+                            )
+                        );
+                    })
                 })
             }
         );
@@ -3480,22 +3503,26 @@ window.scannerSnapshotMeta =
 function scannerSnapshotTime(value){
 
     if(!value){
-        return "Unknown time";
+        return "Unknown";
     }
 
-    const dt = new Date(value);
+    const d = new Date(value);
 
-    if(Number.isNaN(dt.getTime())){
-        return value;
+    if(Number.isNaN(d.getTime())){
+        return "Unknown";
     }
 
-    return dt.toLocaleTimeString(
-        [],
+    return new Intl.DateTimeFormat(
+        "en-US",
         {
+            timeZone: "America/Indiana/Indianapolis",
+            month: "short",
+            day: "numeric",
             hour: "numeric",
-            minute: "2-digit"
+            minute: "2-digit",
+            hour12: true
         }
-    );
+    ).format(d);
 }
 
 
