@@ -393,13 +393,21 @@ def pitcher_value(game, prop):
             s.get("earnedRuns")
         ),
 
+        # PrizePicks MLB Pitcher Fantasy Score:
+        # Out=1, K=3, ER=-3, Win=6, Quality Start=4.
         "pitcher_fantasy_score": (
-            3 * outs
+            outs
             + 3 * _num(s.get("strikeOuts"))
             - 3 * _num(s.get("earnedRuns"))
-            - _num(s.get("hits"))
-            - _num(s.get("baseOnBalls"))
             + 6 * _num(s.get("wins"))
+            + (
+                4
+                if (
+                    outs >= 18
+                    and _num(s.get("earnedRuns")) <= 3
+                )
+                else 0
+            )
         ),
     }
 
