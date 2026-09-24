@@ -1420,18 +1420,16 @@ def scan_mlb_prizepicks(prop_filter=None):
                     readiness = "PASS"
 
                 else:
+                    # Scanner visibility is based on the model opinion.
+                    # Pregame verification controls readiness/final_pick,
+                    # but does not hide an otherwise strong model candidate.
                     qualifies = (
                         lean in ("MORE", "LESS")
                         and confidence in (
                             "MODERATE",
                             "HIGH",
                         )
-                        and bool(
-                            analysis.get(
-                                "qualifies",
-                                True,
-                            )
-                        )
+                        and strongest_probability >= 0.58
                     )
 
                     if not qualifies:
