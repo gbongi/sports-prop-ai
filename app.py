@@ -1103,7 +1103,19 @@ def scan_mlb_prizepicks(prop_filter=None):
                 dt = datetime.fromisoformat(
                     start_time.replace("Z", "+00:00")
                 )
-                pp_dates.add(dt.date().isoformat())
+
+                # PrizePicks timestamps are UTC.
+                # Convert to Eastern before choosing the MLB
+                # calendar date. This prevents late games such
+                # as 9:40 PM ET from being treated as tomorrow
+                # because they are after midnight UTC.
+                eastern_dt = dt.astimezone(
+                    ZoneInfo("America/New_York")
+                )
+
+                pp_dates.add(
+                    eastern_dt.date().isoformat()
+                )
             except Exception:
                 continue
 
