@@ -141,11 +141,24 @@ projection vs {{"%.1f"|format(result.line)}} line
 {% if result.sport=="MLB" %}
 
 <div class="card">
-<h3>Baseline</h3>
-<p>Season <b>{{"%.2f"|format(result.season_avg)}}</b></p>
-<p>L20 <b>{{"%.2f"|format(result.l20)}}</b></p>
-<p>L10 <b>{{"%.2f"|format(result.l10)}}</b></p>
-<p>L5 <b>{{"%.2f"|format(result.l5)}}</b></p>
+<h3>MLB V2 simulation</h3>
+<p>Model <b>{{result.model_version or "MLB V2"}}</b></p>
+<p>Simulations <b>{{result.simulations or 10000}}</b></p>
+<p>Direction <b>{{result.model_direction or result.lean}}</b></p>
+<p>Recommendation <b>{{result.lean}}</b></p>
+<p>Readiness <b>{{result.readiness or "DATA UNAVAILABLE"}}</b></p>
+</div>
+
+<div class="card">
+<h3>Probability distribution</h3>
+<p>MORE <b>{{"%.1f"|format((result.p_more or 0)*100)}}%</b></p>
+<p>LESS <b>{{"%.1f"|format((result.p_less or 0)*100)}}%</b></p>
+<p>PUSH <b>{{"%.1f"|format((result.p_push or 0)*100)}}%</b></p>
+<p class="small">
+PASS means the current edge/readiness does not meet the
+recommendation requirement. It does not mean the opposite side
+is guaranteed.
+</p>
 </div>
 
 <div class="card">
@@ -158,41 +171,120 @@ projection vs {{"%.1f"|format(result.line)}} line
 <p>Status: {{g.status}}</p>
 {% endfor %}
 {% else %}
-<p>No matching game/probable-pitcher data posted yet.</p>
-{% endif %}
-</div>
-
-<div class="card">
-<h3>H2H support</h3>
-<p>Games <b>{{result.h2h_games}}</b></p>
-{% if result.h2h_avg is not none %}
-<p>Average <b>{{"%.2f"|format(result.h2h_avg)}}</b></p>
+<p>No matching game context available.</p>
 {% endif %}
 </div>
 
 <div class="card pregame">
-<h3>Verified pregame data</h3>
-<p>Confirmed lineup: <b>{{result.pregame.lineup|upper}}</b></p>
-<p>Batting order: <b>{{result.pregame.batting_order if result.pregame.batting_order else "DATA UNAVAILABLE"}}</b></p>
-<p>Opposing starter: <b>{{result.pregame.starter_name or "DATA UNAVAILABLE"}}</b></p>
-<p>Starter hand: <b>{{result.pregame.starter_hand or "DATA UNAVAILABLE"}}</b></p>
-<p>Player hand: <b>{{result.pregame.player_hand or "DATA UNAVAILABLE"}}</b></p>
-<p>Handedness splits: <b>{{result.pregame.handedness_split|upper}}</b></p>
-<p>Expected PA: <b>{% if result.pregame.expected_pa is not none %}{{"%.2f"|format(result.pregame.expected_pa)}}{% else %}DATA UNAVAILABLE{% endif %}</b></p>
-<p>Expected pitching outs: <b>{% if result.pregame.expected_outs is not none %}{{"%.2f"|format(result.pregame.expected_outs)}}{% else %}DATA UNAVAILABLE{% endif %}</b></p>
-<p>Park: <b>{{result.pregame.venue or "DATA UNAVAILABLE"}}</b></p>
-<p>Weather: <b>{{result.pregame.weather_text or "DATA UNAVAILABLE"}}</b></p>
-<p>Injuries: <b>{{result.pregame.injuries|upper}}</b></p>
+<h3>V2 pregame verification</h3>
+
+{% if result.lineup_verified is defined %}
+<p>
+Confirmed lineup:
+<b>{{"YES" if result.lineup_verified else "NO"}}</b>
+</p>
+{% endif %}
+
+{% if result.lineup_context_count is defined %}
+<p>
+Lineup hitters modeled:
+<b>{{result.lineup_context_count}}</b>
+</p>
+{% endif %}
+
+{% if result.batting_order %}
+<p>
+Batting order:
+<b>{{result.batting_order}}</b>
+</p>
+{% endif %}
+
+{% if result.opposing_starter %}
+<p>
+Opposing starter:
+<b>{{result.opposing_starter}}</b>
+</p>
+{% endif %}
+
+{% if result.full_team_state_model is defined %}
+<p>
+Full team-state simulation:
+<b>{{"YES" if result.full_team_state_model else "NO"}}</b>
+</p>
+{% endif %}
+
+{% if result.average_team_runs is defined %}
+<p>
+Average simulated team runs:
+<b>{{"%.2f"|format(result.average_team_runs)}}</b>
+</p>
+{% endif %}
+
+{% if result.win_model_verified is defined %}
+<p>
+Pitcher win component verified:
+<b>{{"YES" if result.win_model_verified else "NO"}}</b>
+</p>
+{% endif %}
 </div>
 
 <div class="card">
-<h3>Pregame adjustment audit</h3>
-<p>Before: <b>{{"%.2f"|format(result.projection_before_pregame)}}</b></p>
-<p>Verified multiplier: <b>{{"%.3f"|format(result.pregame.projection_multiplier)}}x</b></p>
-<p>After: <b>{{"%.2f"|format(result.projection)}}</b></p>
-{% for note in result.pregame.notes %}
-<p class="small">• {{note}}</p>
-{% endfor %}
+<h3>Independent market diagnostic</h3>
+
+{% if result.independent_market_available %}
+<p>
+Market lean:
+<b>{{result.independent_market_lean or "DATA UNAVAILABLE"}}</b>
+</p>
+
+{% if result.independent_market_probability is not none %}
+<p>
+Market probability:
+<b>
+{{"%.1f"|format(result.independent_market_probability*100)}}%
+</b>
+</p>
+{% endif %}
+
+<p>
+Strength:
+<b>{{result.independent_market_strength or "DATA UNAVAILABLE"}}</b>
+</p>
+
+<p>
+Books:
+<b>{{result.independent_market_books or 0}}</b>
+</p>
+
+<p>
+Agreement:
+<b>
+{% if result.market_agreement is sameas true %}
+AGREES
+{% elif result.market_agreement is sameas false %}
+DISAGREES
+{% else %}
+NOT COMPARABLE
+{% endif %}
+</b>
+</p>
+
+{% else %}
+
+<p>
+<b>
+{{result.market_diagnostic or
+  result.independent_market_reason or
+  "MARKET UNAVAILABLE"}}
+</b>
+</p>
+
+{% endif %}
+
+<p class="small">
+The independent market is diagnostic only. It does not alter
+the MLB V2 projection or probabilities.
+</p>
 </div>
 
 {% else %}

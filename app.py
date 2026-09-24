@@ -22,6 +22,12 @@ from mlb_model import (
     set_mlb_api_cache,
 )
 
+from mlb_v2_adapter import (
+    analyze_v2_hitter_team_state,
+    analyze_v2_pitcher_with_confirmed_lineup,
+    attach_v2_market_for_game,
+)
+
 app = Flask(__name__)
 
 
@@ -1258,9 +1264,16 @@ def scan_mlb_prizepicks(prop_filter=None):
                 continue
 
             try:
-                # Exact model-input cache. This changes NO model math.
-                # We only reuse a result when every model-defining input
-                # is identical.
+                # ====================================================
+                # MLB V2 AUTOMATIC SCANNER
+                #
+                # PrizePicks supplies player + prop + target line.
+                # Baseball V2 produces the probability independently.
+                # Independent market is attached LAST and is diagnostic
+                # only. It may NEVER change the baseball probability,
+                # direction, recommendation, qualification, or confidence.
+                # ====================================================
+
                 analysis_key = (
                     normalize_mlb_player_name(player_name),
                     player_type,
@@ -1272,65 +1285,84 @@ def scan_mlb_prizepicks(prop_filter=None):
                 )
 
                 if analysis_key in analysis_cache:
-                    analysis = analysis_cache[analysis_key]
-                    analysis_cache_hits += 1
-                else:
-                    analysis = analyze_mlb_verified(
-                        player_name,
-                        player_type,
-                        model_prop,
-                        line,
-                        player_info["team_id"],
-                        player_info["opponent_id"],
-                        player_info["opponent"],
+                    analysis = dict(
+                        analysis_cache[analysis_key]
                     )
+                    analysis_cache_hits += 1
 
-                    analysis_cache[analysis_key] = analysis
+                else:
+                    if player_type == "hitter":
+                        analysis = analyze_v2_hitter_team_state(
+                            player_name,
+                            model_prop,
+                            line,
+                            int(player_info["team_id"]),
+                            int(player_info["opponent_id"]),
+                            player_info["opponent"],
+                            season=CURRENT_SEASON,
+                            simulations=10000,
+                            seed=20260924,
+                        )
+
+                    else:
+                        analysis = (
+                            analyze_v2_pitcher_with_confirmed_lineup(
+                                player_name,
+                                model_prop,
+                                line,
+                                int(player_info["team_id"]),
+                                int(player_info["opponent_id"]),
+                                player_info["opponent"],
+                                season=CURRENT_SEASON,
+                                simulations=10000,
+                                seed=20260924,
+                                win_probability=None,
+                            )
+                        )
+
+                    analysis_cache[analysis_key] = dict(
+                        analysis
+                    )
                     analysis_cache_misses += 1
+
+                # ----------------------------------------------
+                # Baseball output BEFORE independent market.
+                # ----------------------------------------------
 
                 p_more = float(
                     analysis.get("p_more") or 0.0
                 )
 
                 p_less = float(
-                    analysis.get("p_less")
-                    if analysis.get("p_less") is not None
-                    else (1.0 - p_more)
+                    analysis.get("p_less") or 0.0
                 )
 
-                lean = analysis.get("lean")
-                confidence = analysis.get(
-                    "confidence"
+                p_push = float(
+                    analysis.get("p_push") or 0.0
                 )
 
-                pregame = (
-                    analysis.get("pregame") or {}
+                raw_lean = (
+                    analysis.get("lean")
+                    or "PASS"
                 )
+
+                raw_confidence = (
+                    analysis.get("confidence")
+                    or "PASS"
+                )
+
+                model_direction = (
+                    analysis.get("model_direction")
+                    or raw_lean
+                )
+
+                lean = raw_lean
+                confidence = raw_confidence
 
                 strongest_probability = max(
                     p_more,
                     p_less,
                 )
-
-                # -----------------------------------------
-                # PrizePicks market sanity guard
-                # -----------------------------------------
-                #
-                # The model projection remains independent.
-                # PrizePicks supplies the market line only.
-                #
-                # A very strong disagreement with the market
-                # is NOT automatically treated as a stronger
-                # play. Extreme model probabilities receive
-                # additional scrutiny.
-                #
-                # V1 intentionally uses probability rather
-                # than raw percentage projection difference,
-                # because a 0.5 Hits line behaves very
-                # differently from a 5.5 strikeout line.
-
-                raw_confidence = confidence
-                raw_lean = lean
 
                 projection_value = analysis.get(
                     "projection"
@@ -1349,354 +1381,423 @@ def scan_mlb_prizepicks(prop_filter=None):
                     else None
                 )
 
-                market_status = "NORMAL"
-                market_warning = None
-
-                # 70%+ against a standard PP line is a
-                # substantial model/market disagreement.
-                # Do not allow it to remain an automatic
-                # HIGH-confidence candidate without further
-                # validation.
-                if (
-                    lean in ("MORE", "LESS")
-                    and strongest_probability >= 0.70
-                ):
-                    market_status = "REVIEW"
-
-                    market_warning = (
-                        "Large model/PrizePicks disagreement; "
-                        "requires additional pregame validation."
-                    )
-
-                    if confidence == "HIGH":
-                        confidence = "MODERATE"
-
-                # 75%+ is treated as extreme disagreement.
-                # Until residual calibration proves the model
-                # can reliably exploit gaps this large, PASS.
-                if (
-                    lean in ("MORE", "LESS")
-                    and strongest_probability >= 0.75
-                ):
-                    market_status = "EXTREME"
-
-                    market_warning = (
-                        "Extreme model/PrizePicks disagreement; "
-                        "market guard forced PASS."
-                    )
-
-                    lean = "PASS"
-                    confidence = "PASS"
-
-                # -----------------------------------------
-                # Independent PropLine market check
-                # -----------------------------------------
+                # ----------------------------------------------
+                # Pregame/readiness comes from V2 baseball data.
                 #
-                # PrizePicks remains the TARGET line.
-                #
-                # PropLine provides an independent exact-line
-                # market reference when enough books exist.
-                #
-                # If the market is unavailable/insufficient,
-                # the V1 guard above remains the fallback.
-
-                market_row = (
-                    market_rows_by_projection.get(
-                        str(
-                            pp.get(
-                                "projection_id"
-                            )
-                        )
-                    )
-                )
-
-                independent_market_available = False
-                independent_market_reason = None
-                independent_market_lean = None
-                independent_market_probability = None
-                independent_market_strength = (
-                    "UNAVAILABLE"
-                )
-                independent_market_books = 0
-                independent_market_dispersion = None
-                independent_market_outliers_removed = 0
-
-                market_check = "FALLBACK_V1"
-                market_agreement = None
-                market_recommended_action = (
-                    "FALLBACK"
-                )
-
-                if market_row:
-                    independent_market_available = (
-                        bool(
-                            market_row.get(
-                                "market_available"
-                            )
-                        )
-                    )
-
-                    independent_market_reason = (
-                        market_row.get(
-                            "market_reason"
-                        )
-                    )
-
-                    independent_market_lean = (
-                        market_row.get(
-                            "market_lean"
-                        )
-                    )
-
-                    independent_market_probability = (
-                        market_row.get(
-                            "market_probability"
-                        )
-                    )
-
-                    independent_market_strength = (
-                        market_row.get(
-                            "market_strength",
-                            "UNAVAILABLE",
-                        )
-                    )
-
-                    independent_market_books = (
-                        market_row.get(
-                            "market_books",
-                            0,
-                        )
-                    )
-
-                    independent_market_dispersion = (
-                        market_row.get(
-                            "market_dispersion"
-                        )
-                    )
-
-                    independent_market_outliers_removed = (
-                        market_row.get(
-                            "market_outliers_removed",
-                            0,
-                        )
-                    )
-
-                    market_result = {
-                        "available":
-                            independent_market_available,
-
-                        "market_lean":
-                            independent_market_lean,
-
-                        "market_probability":
-                            independent_market_probability,
-
-                        "market_strength":
-                            independent_market_strength,
-                    }
-
-                    comparison = (
-                        compare_model_to_market(
-                            model_lean=raw_lean,
-                            model_probability=
-                                strongest_probability,
-                            market_result=
-                                market_result,
-                        )
-                    )
-
-                    market_check = comparison.get(
-                        "market_check",
-                        "FALLBACK_V1",
-                    )
-
-                    market_agreement = (
-                        comparison.get(
-                            "market_agreement"
-                        )
-                    )
-
-                    market_recommended_action = (
-                        comparison.get(
-                            "recommended_action",
-                            "FALLBACK",
-                        )
-                    )
-
-                    # Meaningful independent market
-                    # disagreement can force PASS.
-                    if (
-                        market_recommended_action
-                        == "PASS"
-                    ):
-                        lean = "PASS"
-                        confidence = "PASS"
-
-                        market_status = (
-                            "INDEPENDENT_MARKET_PASS"
-                        )
-
-                        market_warning = (
-                            "Independent exact-line market "
-                            "meaningfully disagrees with "
-                            "the model; forced PASS."
-                        )
-
-                    # When independent market evidence is
-                    # usable and does not reject the model,
-                    # restore the original model decision.
-                    #
-                    # This prevents the temporary V1
-                    # probability guard from overriding a
-                    # model opinion that has passed the
-                    # stronger independent market check.
-                    elif (
-                        market_recommended_action
-                        in ("MORE", "LESS")
-                    ):
-                        lean = raw_lean
-                        confidence = raw_confidence
-
-                        market_status = (
-                            "INDEPENDENT_MARKET_CHECKED"
-                        )
-
-                        if (
-                            market_agreement is True
-                        ):
-                            market_warning = (
-                                "Model direction agrees "
-                                "with independent exact-line "
-                                "market consensus."
-                            )
-                        elif (
-                            independent_market_lean
-                            == "NEUTRAL"
-                        ):
-                            market_warning = (
-                                "Independent market is "
-                                "neutral; model direction "
-                                "retained."
-                            )
-                        else:
-                            market_warning = (
-                                "Independent market evidence "
-                                "is weak; model direction "
-                                "retained."
-                            )
-
-                    # FALLBACK means the existing V1 result
-                    # remains untouched.
-
-                qualifies = (
-                    lean in ("MORE", "LESS")
-                    and confidence in (
-                        "MODERATE",
-                        "HIGH",
-                    )
-                )
+                # IMPORTANT:
+                # Time alone never converts a prop to PASS.
+                # ----------------------------------------------
 
                 timing = player_info["timing"]
 
-                # Hitters require confirmed lineup for
-                # FINAL PICK status.
-                if player_type == "hitter":
-                    lineup_ready = (
-                        pregame.get(
-                            "in_starting_lineup"
-                        ) is True
+                baseball_readiness = str(
+                    analysis.get("readiness")
+                    or ""
+                ).upper()
+
+                lineup_verified = bool(
+                    analysis.get("lineup_verified")
+                )
+
+                in_starting_lineup = analysis.get(
+                    "in_starting_lineup"
+                )
+
+                if (
+                    player_type == "hitter"
+                    and (
+                        baseball_readiness
+                        == "PASS_NOT_IN_LINEUP"
+                        or (
+                            lineup_verified
+                            and in_starting_lineup is False
+                        )
                     )
+                ):
+                    lean = "PASS"
+                    confidence = "PASS"
+                    qualifies = False
+                    readiness = "PASS"
+
                 else:
-                    # Pitchers are handled by the verified
-                    # pregame/model checks.
-                    lineup_ready = True
+                    qualifies = (
+                        lean in ("MORE", "LESS")
+                        and confidence in (
+                            "MODERATE",
+                            "HIGH",
+                        )
+                        and bool(
+                            analysis.get(
+                                "qualifies",
+                                True,
+                            )
+                        )
+                    )
+
+                    if not qualifies:
+                        readiness = "PASS"
+
+                    elif (
+                        baseball_readiness
+                        in (
+                            "BASEBALL_CONTEXT_READY",
+                            "VERIFIED",
+                        )
+                    ):
+                        # Baseball context is ready.
+                        # Market diagnostic is checked below.
+                        readiness = "BASEBALL_CONTEXT_READY"
+
+                    else:
+                        # A later game with an unposted lineup remains
+                        # pending. It is NOT a PASS because of time.
+                        readiness = "STRONG — PREGAME PENDING"
+
+                # ----------------------------------------------
+                # Independent market diagnostic LAST.
+                # ----------------------------------------------
+
+                before_market = {
+                    key: analysis.get(key)
+                    for key in (
+                        "projection",
+                        "p_more",
+                        "p_less",
+                        "p_push",
+                        "model_direction",
+                        "lean",
+                        "qualifies",
+                        "confidence",
+                    )
+                }
+
+                # The scanner player lookup does not guarantee
+                # explicit away/home orientation here.
+                #
+                # Do NOT guess team orientation just to obtain market
+                # data. Baseball V2 remains authoritative and the
+                # independent market is diagnostic only.
+                away_team = player_info.get("away_team")
+                home_team = player_info.get("home_team")
+
+                # Fallback team orientation when schedule metadata
+                # cannot be resolved. Market simply remains unavailable
+                # rather than contaminating the baseball model.
+                if away_team and home_team:
+                    try:
+                        analysis = attach_v2_market_for_game(
+                            analysis,
+                            away_team=away_team,
+                            home_team=home_team,
+                            start_time=player_info.get(
+                                "start_time"
+                            ),
+                            player_name=player_name,
+                            model_prop=model_prop,
+                            pp_line=line,
+                        )
+                    except Exception as market_exc:
+                        analysis[
+                            "market_diagnostic_checked"
+                        ] = False
+
+                        analysis[
+                            "market_diagnostic"
+                        ] = "MARKET_UNAVAILABLE"
+
+                        analysis[
+                            "independent_market_available"
+                        ] = False
+
+                        analysis[
+                            "independent_market_reason"
+                        ] = str(market_exc)
+
+                        analysis[
+                            "market_used"
+                        ] = False
+
+                else:
+                    analysis[
+                        "market_diagnostic_checked"
+                    ] = False
+
+                    analysis[
+                        "market_diagnostic"
+                    ] = "MARKET_UNAVAILABLE"
+
+                    analysis[
+                        "independent_market_available"
+                    ] = False
+
+                    analysis[
+                        "independent_market_reason"
+                    ] = "GAME_TEAMS_UNRESOLVED"
+
+                    analysis[
+                        "market_used"
+                    ] = False
+
+                # Hard immutability assertion.
+                for key, expected in before_market.items():
+                    if analysis.get(key) != expected:
+                        raise RuntimeError(
+                            "V2 market diagnostic modified "
+                            f"baseball output: {key}"
+                        )
+
+                independent_market_available = bool(
+                    analysis.get(
+                        "independent_market_available"
+                    )
+                )
+
+                independent_market_reason = analysis.get(
+                    "independent_market_reason"
+                )
+
+                independent_market_lean = analysis.get(
+                    "independent_market_lean"
+                )
+
+                independent_market_probability = analysis.get(
+                    "independent_market_probability"
+                )
+
+                independent_market_strength = (
+                    analysis.get(
+                        "independent_market_strength"
+                    )
+                    or "UNAVAILABLE"
+                )
+
+                independent_market_books = int(
+                    analysis.get(
+                        "independent_market_books"
+                    )
+                    or 0
+                )
+
+                independent_market_dispersion = (
+                    analysis.get(
+                        "independent_market_dispersion"
+                    )
+                )
+
+                independent_market_outliers_removed = int(
+                    analysis.get(
+                        "independent_market_outliers_removed"
+                    )
+                    or 0
+                )
+
+                market_agreement = analysis.get(
+                    "market_agreement"
+                )
+
+                market_check = (
+                    analysis.get(
+                        "market_diagnostic"
+                    )
+                    or (
+                        "MARKET_AVAILABLE"
+                        if independent_market_available
+                        else "MARKET_UNAVAILABLE"
+                    )
+                )
+
+                # Market is information only.
+                market_recommended_action = (
+                    "DIAGNOSTIC_ONLY"
+                )
+
+                market_status = market_check
+
+                if (
+                    independent_market_available
+                    and market_agreement is True
+                ):
+                    market_warning = (
+                        "Independent market agrees with "
+                        "the baseball model. Diagnostic only."
+                    )
+
+                elif (
+                    independent_market_available
+                    and market_agreement is False
+                ):
+                    market_warning = (
+                        "Independent market disagrees with "
+                        "the baseball model. Risk flag only; "
+                        "baseball probability unchanged."
+                    )
+
+                elif independent_market_available:
+                    market_warning = (
+                        "Independent market checked. "
+                        "Baseball probability unchanged."
+                    )
+
+                else:
+                    market_warning = (
+                        independent_market_reason
+                        or "Independent market unavailable."
+                    )
+
+                # VERIFIED means:
+                # actionable baseball model
+                # + baseball context ready
+                # + independent market successfully checked
+                # + no meaningful model/market conflict.
+                if qualifies:
+                    if (
+                        readiness
+                        == "BASEBALL_CONTEXT_READY"
+                        and independent_market_available
+                        and market_agreement is not False
+                    ):
+                        readiness = "VERIFIED"
+
+                    elif (
+                        readiness
+                        == "BASEBALL_CONTEXT_READY"
+                    ):
+                        readiness = (
+                            "STRONG — PREGAME PENDING"
+                        )
 
                 final_pick = (
                     qualifies
-                    and timing["stage"]
-                    == "FINAL CHECK"
-                    and lineup_ready
+                    and readiness == "VERIFIED"
                 )
-
-                market_verified = (
-                    independent_market_available
-                    and independent_market_books >= 3
-                    and independent_market_strength != "INSUFFICIENT"
-                    and market_recommended_action in ("MORE", "LESS")
-                )
-                if not qualifies:
-                    readiness = "PASS"
-                elif final_pick and market_verified:
-                    readiness = "VERIFIED"
-                else:
-                    readiness = "STRONG — PREGAME PENDING"
 
                 results.append({
                     "sport": "MLB",
+                    "model_version": "MLB_V2",
+                    "v2_scanner": True,
+
                     "readiness": readiness,
-                    "sport": "MLB",
-                    "readiness": readiness,
+
                     "projection_id": pp.get(
                         "projection_id"
                     ),
+
                     "player": player_name,
                     "player_id": player_info.get(
                         "player_id"
                     ),
+
                     "player_type": player_type,
 
                     "team": player_info["team"],
                     "team_id": player_info["team_id"],
-                    "opponent": player_info[
-                        "opponent"
-                    ],
-                    "opponent_id": player_info[
-                        "opponent_id"
-                    ],
 
-                    "game_id": player_info["game_id"],
-                    "game_status": player_info[
-                        "game_status"
-                    ],
-                    "start_time": player_info[
-                        "start_time"
-                    ],
+                    "opponent":
+                        player_info["opponent"],
 
-                    "scan_stage": timing["stage"],
-                    "minutes_to_game": timing[
-                        "minutes_to_game"
-                    ],
+                    "opponent_id":
+                        player_info["opponent_id"],
+
+                    "game_id":
+                        player_info["game_id"],
+
+                    "game_status":
+                        player_info["game_status"],
+
+                    "start_time":
+                        player_info["start_time"],
+
+                    "scan_stage":
+                        timing["stage"],
+
+                    "minutes_to_game":
+                        timing["minutes_to_game"],
 
                     "pp_prop": pp_prop,
                     "model_prop": model_prop,
                     "pp_line": line,
-                    "odds_type": pp.get(
-                        "odds_type"
-                    ),
-                    "pp_updated_at": pp.get(
-                        "updated_at"
-                    ),
 
-                    "projection": analysis.get(
-                        "projection"
-                    ),
+                    "odds_type":
+                        pp.get("odds_type"),
+
+                    "pp_updated_at":
+                        pp.get("updated_at"),
+
+                    "projection":
+                        projection_value,
 
                     "p_more": p_more,
                     "p_less": p_less,
+                    "p_push": p_push,
+
+                    "model_direction":
+                        model_direction,
 
                     "lean": lean,
                     "confidence": confidence,
 
                     "raw_lean": raw_lean,
-                    "raw_confidence": raw_confidence,
+                    "raw_confidence":
+                        raw_confidence,
 
                     "model_edge": model_edge,
 
-                    # Final market decision metadata.
-                    "market_status": market_status,
-                    "market_warning": market_warning,
+                    "strongest_probability":
+                        strongest_probability,
 
-                    # Independent PropLine market metadata.
+                    "qualifies": qualifies,
+                    "final_pick": final_pick,
+
+                    "lineup_verified":
+                        analysis.get(
+                            "lineup_verified"
+                        ),
+
+                    "lineup_context_count":
+                        analysis.get(
+                            "lineup_context_count"
+                        ),
+
+                    "in_starting_lineup":
+                        in_starting_lineup,
+
+                    "batting_order":
+                        analysis.get(
+                            "batting_order"
+                        ),
+
+                    "opposing_starter":
+                        analysis.get(
+                            "opposing_starter"
+                        ),
+
+                    "full_team_state_model":
+                        analysis.get(
+                            "full_team_state_model"
+                        ),
+
+                    "average_team_runs":
+                        analysis.get(
+                            "average_team_runs"
+                        ),
+
+                    "win_model_verified":
+                        analysis.get(
+                            "win_model_verified"
+                        ),
+
+                    "simulations":
+                        analysis.get(
+                            "simulations",
+                            10000,
+                        ),
+
+                    "market_status":
+                        market_status,
+
+                    "market_warning":
+                        market_warning,
+
                     "independent_market_available":
                         independent_market_available,
 
@@ -1721,33 +1822,16 @@ def scan_mlb_prizepicks(prop_filter=None):
                     "independent_market_outliers_removed":
                         independent_market_outliers_removed,
 
-                    "market_check": market_check,
+                    "market_check":
+                        market_check,
+
                     "market_agreement":
                         market_agreement,
 
                     "market_recommended_action":
                         market_recommended_action,
 
-                    "strongest_probability":
-                        strongest_probability,
-
-                    "qualifies": qualifies,
-                    "final_pick": final_pick,
-
-                    "in_starting_lineup":
-                        pregame.get(
-                            "in_starting_lineup"
-                        ),
-
-                    "batting_order":
-                        pregame.get(
-                            "batting_order"
-                        ),
-
-                    "lineup_warning":
-                        analysis.get(
-                            "lineup_warning"
-                        ),
+                    "market_used": False,
 
                     "status": (
                         "FINAL PICK"
@@ -1761,9 +1845,6 @@ def scan_mlb_prizepicks(prop_filter=None):
                 })
 
             except Exception as exc:
-
-                # Insufficient history or another model
-                # limitation should not crash the scan.
                 errors.append({
                     "player": player_name,
                     "prop": pp_prop,
@@ -1771,6 +1852,7 @@ def scan_mlb_prizepicks(prop_filter=None):
                     "status": "MODEL_PASS",
                     "error": str(exc),
                 })
+
 
         # Strongest supported model opinions first.
         results.sort(
@@ -2777,17 +2859,123 @@ def index():
 
                     form["player"] = probable
 
-                result = analyze_mlb_verified(
-                    form["player"],
-                    form["player_type"],
-                    form["prop"],
-                    line,
-                    int(form["team"]),
-                    int(opponent_id),
-                    opponent_name,
-                )
+                # ====================================================
+                # MLB V2 MANUAL ANALYZER
+                #
+                # Baseball model first.
+                # PrizePicks line is only the comparison threshold.
+                # Independent market is attached afterward as a
+                # diagnostic and MUST NOT alter baseball probability.
+                # ====================================================
+
+                if form["player_type"] == "hitter":
+                    result = analyze_v2_hitter_team_state(
+                        form["player"],
+                        form["prop"],
+                        line,
+                        int(form["team"]),
+                        int(opponent_id),
+                        opponent_name,
+                        season=CURRENT_SEASON,
+                        simulations=10000,
+                        seed=20260924,
+                    )
+
+                else:
+                    result = analyze_v2_pitcher_with_confirmed_lineup(
+                        form["player"],
+                        form["prop"],
+                        line,
+                        int(form["team"]),
+                        int(opponent_id),
+                        opponent_name,
+                        season=CURRENT_SEASON,
+                        simulations=10000,
+                        seed=20260924,
+                        win_probability=None,
+                    )
 
                 result["sport"] = "MLB"
+                result["player_type"] = form["player_type"]
+                result["prop"] = form["prop"].upper()
+                result["line"] = line
+                result["opponent"] = opponent_name
+                result["v2_manual"] = True
+
+                # Preserve PUSH explicitly for integer PrizePicks lines.
+                result["p_push"] = float(
+                    result.get("p_push") or 0.0
+                )
+
+                # ----------------------------------------------------
+                # Independent market diagnostic LAST.
+                #
+                # Failure/unavailability/unsupported market must never
+                # change projection, probability, direction, lean,
+                # qualification, or confidence.
+                # ----------------------------------------------------
+                try:
+                    away_name = (
+                        matchup.get("away")
+                        or ""
+                    )
+
+                    home_name = (
+                        matchup.get("home")
+                        or ""
+                    )
+
+                    start_time = (
+                        matchup.get("start_time")
+                        or matchup.get("game_date")
+                        or ""
+                    )
+
+                    before_market = {
+                        key: result.get(key)
+                        for key in (
+                            "projection",
+                            "p_more",
+                            "p_less",
+                            "p_push",
+                            "model_direction",
+                            "lean",
+                            "qualifies",
+                            "confidence",
+                        )
+                    }
+
+                    result = attach_v2_market_for_game(
+                        result,
+                        away_team=away_name,
+                        home_team=home_name,
+                        start_time=start_time,
+                        player_name=form["player"],
+                        model_prop=form["prop"],
+                        pp_line=line,
+                    )
+
+                    for key, value in before_market.items():
+                        if result.get(key) != value:
+                            raise RuntimeError(
+                                "Market diagnostic attempted to modify "
+                                f"baseball output: {key}"
+                            )
+
+                except Exception as market_error:
+                    # Market failure does NOT fail the baseball model.
+                    result["market_diagnostic_checked"] = False
+                    result["market_diagnostic"] = "MARKET_UNAVAILABLE"
+                    result["market_agreement"] = None
+                    result["independent_market_available"] = False
+                    result["independent_market_reason"] = str(
+                        market_error
+                    )
+                    result["independent_market_lean"] = None
+                    result["independent_market_probability"] = None
+                    result["independent_market_strength"] = "UNAVAILABLE"
+                    result["independent_market_books"] = 0
+                    result["market_used"] = False
 
                 context = mlb_pregame_game_context(
                     int(form["team"]),
